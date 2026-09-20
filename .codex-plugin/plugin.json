@@ -1,0 +1,18 @@
+{
+  "name": "optimal-challenge",
+  "version": "1.0.0",
+  "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
+  "author": {
+    "name": "Unattributed"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Optimal Challenge",
+    "shortDescription": "Plan and verify complex tasks efficiently.",
+    "longDescription": "Routes difficult tasks through focused context, suitable skills, careful delegation, and verification matched to risk.",
+    "developerName": "Unattributed",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me plan and verify this complex task."
+  }
+}

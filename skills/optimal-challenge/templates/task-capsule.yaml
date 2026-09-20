@@ -1,0 +1,20 @@
+goal_id: ""
+task:
+  outcome: ""
+  done_when: ""
+constraints: []
+relevant_decisions: []
+evidence_pointers: []
+capability_lease:
+  allowed: []
+  conditional: []
+  forbidden: []
+  may_spawn_agents: false
+escalation:
+  return_status: NEEDS_CAPABILITY
+return_contract:
+  - status
+  - changed_artifacts
+  - verification
+  - decision_delta
+  - concerns

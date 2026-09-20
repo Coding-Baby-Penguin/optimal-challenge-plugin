@@ -1,0 +1,5 @@
+{
+  "name": "optimal-challenge",
+  "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
+  "version": "1.0.0"
+}

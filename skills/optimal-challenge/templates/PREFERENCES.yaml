@@ -1,0 +1,11 @@
+preferences:
+  - id: PREF-001
+    condition: ""
+    behavior: ""
+    scope: project
+    evidence:
+      explicit: false
+      confirmations: 0
+      contradictions: 0
+    confidence: provisional
+    last_seen: null
