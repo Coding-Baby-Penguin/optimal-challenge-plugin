@@ -3,16 +3,19 @@
   "version": "1.0.0",
   "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
   "author": {
-    "name": "Unattributed"
+    "name": "Coding Baby Penguin"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Optimal Challenge",
     "shortDescription": "Plan and verify complex tasks efficiently.",
     "longDescription": "Routes difficult tasks through focused context, suitable skills, careful delegation, and verification matched to risk.",
-    "developerName": "Unattributed",
+    "developerName": "Coding Baby Penguin",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Help me plan and verify this complex task."
-  }
+    "defaultPrompt": "Help me plan and verify this complex task.",
+    "websiteURL": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"
+  },
+  "homepage": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
+  "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"
 }

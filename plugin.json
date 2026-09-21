@@ -3,5 +3,17 @@
   "name": "optimal-challenge",
   "version": "1.0.0",
   "description": "A lightweight meta-router that escalates difficult work only when added context, tools, skills, agents, or verification are expected to materially improve the result.",
-  "keywords": ["orchestration", "context", "verification", "skills", "agents", "efficiency"]
+  "keywords": [
+    "orchestration",
+    "context",
+    "verification",
+    "skills",
+    "agents",
+    "efficiency"
+  ],
+  "author": {
+    "name": "Coding Baby Penguin"
+  },
+  "homepage": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
+  "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"
 }

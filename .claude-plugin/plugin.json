@@ -1,5 +1,10 @@
 {
   "name": "optimal-challenge",
   "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "author": {
+    "name": "Coding Baby Penguin"
+  },
+  "homepage": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
+  "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"
 }
