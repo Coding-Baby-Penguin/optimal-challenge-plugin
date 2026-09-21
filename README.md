@@ -33,7 +33,14 @@ optimal-challenge/
 ## Install / test
 
 ### OpenAI / Codex-compatible plugin
-Use the ZIP/package through the plugin loading mechanism supported by your Codex/ChatGPT environment. The bundle contains both the current portable root `plugin.json` and `.codex-plugin/plugin.json` compatibility manifest.
+This repository contains a local Codex marketplace at `.agents/plugins/marketplace.json`. From PowerShell, add this repository as the marketplace and install its plugin:
+
+```powershell
+codex plugin marketplace add D:\Projects\Plugins\optimal-challenge-plugin
+codex plugin add optimal-challenge@optimal-challenge-local
+```
+
+For another checkout, replace the path in the first command with that checkout's root. Start a new Codex task after installation so it loads the skill. The root `plugin.json` and `.codex-plugin/plugin.json` describe the plugin; `.agents/plugins/marketplace.json` is the manifest required by `codex plugin marketplace add`.
 
 ### Claude Code
 Claude Code supports loading a plugin directory or ZIP for local testing:

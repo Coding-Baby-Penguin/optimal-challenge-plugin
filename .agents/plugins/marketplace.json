@@ -1,0 +1,20 @@
+{
+  "name": "optimal-challenge-local",
+  "interface": {
+    "displayName": "Optimal Challenge Local"
+  },
+  "plugins": [
+    {
+      "name": "optimal-challenge",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
