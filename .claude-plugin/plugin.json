@@ -1,7 +1,7 @@
 {
   "name": "optimal-challenge",
-  "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
-  "version": "1.0.0",
+  "description": "Assess every request, reuse valid plans, and route only meaningful complexity to specialist workflows.",
+  "version": "1.1.0",
   "author": {
     "name": "Coding Baby Penguin"
   },

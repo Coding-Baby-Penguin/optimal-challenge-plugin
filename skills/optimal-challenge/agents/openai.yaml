@@ -1,0 +1,6 @@
+interface:
+  display_name: "Optimal Challenge"
+  short_description: "Routes every request to the smallest adequate workflow."
+  default_prompt: "Assess this request and use the smallest adequate workflow."
+policy:
+  allow_implicit_invocation: true

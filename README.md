@@ -1,6 +1,10 @@
-# Optimal Challenge 1.0.0
+# Optimal Challenge 1.1.0
 
-A lightweight meta-routing skill/plugin for difficult AI work. It chooses the smallest adequate workflow, keeps working context bounded, controls subagent skill/tool budgets, uses risk-matched verification, and records repeating patterns/preferences without making ordinary turns pay for an always-on adaptation engine.
+<p align="center">
+  <img src="assets/logo.png" alt="Optimal Challenge penguin routing icon" width="180">
+</p>
+
+A lightweight always-on routing skill/plugin. It handles simple requests directly, reuses applicable plans in continued threads, and loads specialist workflows only when their expected value justifies the context and compute cost.
 
 ## Design goals
 
@@ -42,16 +46,37 @@ codex plugin add optimal-challenge@optimal-challenge-local
 
 For another checkout, replace the path in the first command with that checkout's root. Start a new Codex task after installation so it loads the skill. The root `plugin.json` and `.codex-plugin/plugin.json` describe the plugin; `.agents/plugins/marketplace.json` is the manifest required by `codex plugin marketplace add`.
 
+#### Skill selection
+
+Codex does not provide a numeric skill-priority setting. It selects skills from their names and descriptions. Optimal Challenge is intentionally automatic for every request. Its fast path handles simple tasks directly without loading references or additional process skills. For continued work, it reuses an applicable approved plan instead of invoking brainstorming or planning again.
+
+If another installed skill activates on every request, disable that specific skill in `~/.codex/config.toml` using its installed `SKILL.md` path:
+
+```toml
+[[skills.config]]
+path = "C:/path/to/competing-skill/SKILL.md"
+enabled = false
+```
+
+Keep this plugin enabled:
+
+```toml
+[plugins."optimal-challenge@optimal-challenge-local"]
+enabled = true
+```
+
+Restart Codex after changing the configuration. To force this workflow for one request, invoke `$optimal-challenge:optimal-challenge` explicitly.
+
 ### Claude Code
 Claude Code supports loading a plugin directory or ZIP for local testing:
 
 ```bash
 claude --plugin-dir ./optimal-challenge
 # or supported Claude Code versions:
-claude --plugin-dir ./optimal-challenge-plugin-1.0.0.zip
+claude --plugin-dir ./optimal-challenge-plugin-1.1.0.zip
 ```
 
-The skill appears under the plugin namespace. Implicit model invocation remains enabled so difficult matching requests may route through it automatically.
+The skill appears under the plugin namespace. Implicit model invocation remains enabled so it can assess every request and route only meaningful complexity.
 
 ## Validate
 
@@ -60,7 +85,7 @@ python scripts/validate.py
 python -m unittest -v tests.test_package
 ```
 
-The validator checks manifest consistency, skill frontmatter, reference integrity, word/description budgets, path safety, scenario coverage, and that no active hooks ship in v1.0.
+The validator checks manifest consistency, skill frontmatter, reference integrity, word/description budgets, path safety, scenario coverage, and that no active hooks ship in v1.1.
 
 ## Adaptation and self-improvement
 

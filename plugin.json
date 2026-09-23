@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "optimal-challenge",
-  "version": "1.0.0",
-  "description": "A lightweight meta-router that escalates difficult work only when added context, tools, skills, agents, or verification are expected to materially improve the result.",
+  "version": "1.1.0",
+  "description": "A lightweight always-on meta-router that assesses each request, reuses valid plans, and loads only capabilities expected to improve the result.",
   "keywords": [
     "orchestration",
     "context",

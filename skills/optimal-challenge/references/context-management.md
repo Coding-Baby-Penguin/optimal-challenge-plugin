@@ -26,3 +26,6 @@ Recommended logical state:
 Continue when context is clean and task-local. Checkpoint then compact around meaningful milestones. Prefer fresh context when changing phases, performing independent review, recovering from noisy/dead-end exploration, or when old state is confusing current decisions.
 
 Before any reset, flush durable state. After reset, rehydrate from authoritative state and source, not from a narrative retelling.
+
+## Plan continuity
+Treat an applicable approved plan as WARM state. Locate it before invoking brainstorming or planning, confirm that its goal and constraints still match, then resume its next unfinished step. Do not recreate a plan because the thread is long, compacted, or resumed. Replan only when the existing plan is absent, materially invalidated, incomplete at a decision boundary, or explicitly rejected by the user.

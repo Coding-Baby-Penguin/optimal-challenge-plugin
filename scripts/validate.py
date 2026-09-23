@@ -34,6 +34,7 @@ for rel in [
     ".codex-plugin/plugin.json",
     ".claude-plugin/plugin.json",
     "skills/optimal-challenge/SKILL.md",
+    "skills/optimal-challenge/agents/openai.yaml",
     "tests/scenarios.json",
 ]:
     check((ROOT / rel).is_file(), f"Missing required file: {rel}")
@@ -45,12 +46,12 @@ claude_manifest = read_json(ROOT / ".claude-plugin" / "plugin.json")
 names = {m.get("name") for m in [root_manifest, codex_manifest, claude_manifest] if isinstance(m, dict)}
 versions = {m.get("version") for m in [root_manifest, codex_manifest, claude_manifest] if isinstance(m, dict)}
 check(names == {"optimal-challenge"}, f"Manifest name mismatch: {names}")
-check(versions == {"1.0.0"}, f"Manifest version mismatch: {versions}")
+check(versions == {"1.1.0"}, f"Manifest version mismatch: {versions}")
 check(root_manifest.get("$schema") == "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "Portable manifest schema mismatch")
 check(codex_manifest.get("skills") == "./skills/", "Codex skills path must be ./skills/")
 
-# No active hooks in v1
-check(not (ROOT / "hooks" / "hooks.json").exists(), "v1 must not ship active hooks/hooks.json")
+# No active hooks in v1.1
+check(not (ROOT / "hooks" / "hooks.json").exists(), "v1.1 must not ship active hooks/hooks.json")
 
 # No symlinks or unsafe relative paths
 for path in ROOT.rglob("*"):
@@ -79,6 +80,10 @@ if desc_m:
 body = text[fm.end():] if fm else text
 word_count = len(re.findall(r"\b[\w'-]+\b", body))
 check(word_count <= 350, f"Runtime SKILL.md too large: {word_count} words (max 350)")
+
+# Always-on invocation metadata
+agent_yaml = (SKILL.parent / "agents" / "openai.yaml").read_text(encoding="utf-8")
+check("allow_implicit_invocation: true" in agent_yaml, "Optimal Challenge must allow implicit invocation")
 
 # All directly named reference files in SKILL.md must exist.
 refs = sorted(set(re.findall(r"references/([A-Za-z0-9_.-]+\.md)", text)))

@@ -14,7 +14,7 @@ class PackageIndependentReview(unittest.TestCase):
         paths = [ROOT / "plugin.json", ROOT / ".codex-plugin/plugin.json", ROOT / ".claude-plugin/plugin.json"]
         manifests = [json.loads(p.read_text()) for p in paths]
         self.assertEqual({m["name"] for m in manifests}, {"optimal-challenge"})
-        self.assertEqual({m["version"] for m in manifests}, {"1.0.0"})
+        self.assertEqual({m["version"] for m in manifests}, {"1.1.0"})
 
     def test_skill_is_small_and_trigger_focused(self):
         text = (SKILL_DIR / "SKILL.md").read_text()
@@ -30,6 +30,19 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertGreaterEqual(len(refs), 8)
         for ref in refs:
             self.assertTrue((SKILL_DIR / "references" / ref).is_file(), ref)
+
+    def test_router_is_always_on_and_reuses_existing_plans(self):
+        text = (SKILL_DIR / "SKILL.md").read_text().lower()
+        for phrase in [
+            "handling any request",
+            "never invoke `superpowers:using-superpowers`",
+            "reuse an applicable approved plan",
+            "thread length alone never justifies planning",
+        ]:
+            self.assertIn(phrase, text)
+
+        agent = (SKILL_DIR / "agents" / "openai.yaml").read_text().lower()
+        self.assertIn("allow_implicit_invocation: true", agent)
 
     def test_no_active_hooks_ship(self):
         self.assertFalse((ROOT / "hooks" / "hooks.json").exists())
@@ -72,7 +85,7 @@ class PackageIndependentReview(unittest.TestCase):
     def test_scenario_matrix_has_positive_negative_and_pressure_cases(self):
         scenarios = json.loads((ROOT / "tests" / "scenarios.json").read_text())
         ids = {s["id"] for s in scenarios}
-        for required in ["direct-01", "agent-03", "evolution-02", "hook-02", "stagnation-01", "security-01"]:
+        for required in ["direct-01", "direct-04", "plan-01", "plan-02", "skill-01", "agent-03", "evolution-02", "hook-02", "stagnation-01", "security-01"]:
             self.assertIn(required, ids)
         self.assertGreaterEqual(len(scenarios), 25)
 

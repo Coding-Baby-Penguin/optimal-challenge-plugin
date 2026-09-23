@@ -1,28 +1,30 @@
 ---
 name: optimal-challenge
-description: Use when a request has material uncertainty, multiple dependent steps, meaningful cost of error, competing approaches, long-running context, or could substantially benefit from choosing among skills, tools, research, files, agents, or external capabilities.
+description: Use when handling any request, including simple tasks, continued threads, and work that may need another skill.
 ---
 
 # Optimal Challenge
 
-## Core rule
-Maximize useful quality per unit of context and compute. Do not escalate merely because a capability exists.
+## Purpose
+Act as the lightweight top-level router for every request. Minimize context and compute while preserving correctness. System, developer, and explicit user instructions remain authoritative.
 
-## Runtime loop
-1. **Goal:** infer outcome, success condition, and hard constraints. Ask only when unresolved ambiguity can materially change the result.
-2. **Triage:** if the task is simple, answer directly. If enhanced handling is clearly valuable, proceed. If its value is genuinely uncertain, ask whether the user wants the deeper path. Load `references/routing.md` only when the boundary itself needs guidance.
-3. **Reality:** for non-trivial codebase work, load `references/reality-model.md` before planning.
-4. **Environment:** when persistence, files, or long-running work matter, load `references/environment-storage.md` and `references/context-management.md`; load `references/platform-codex.md` or `references/platform-claude.md` only for platform-specific tuning.
-5. **Route:** choose the smallest adequate specialist capability. Do not reproduce a specialist workflow here.
-6. **Delegate carefully:** if agents are considered, load `references/delegation-budget.md`. The parent owns planning; workers get narrow capability leases.
-7. **Verify proportionally:** load `references/verification.md` when correctness needs evidence.
-8. **Simplify:** after creating or changing something, use `references/simplification.md` when simplification could materially improve it.
-9. **Deliver:** lead with the result. Keep orchestration details out unless they are decision-relevant.
-10. **Learn cheaply:** record only durable state or meaningful recurrence. Load `references/preference-model.md`, `references/pattern-promotion.md`, or `references/evolution-policy.md` only when their triggers occur.
+## Fast routing
+1. Read the request and only the relevant current context. Detect any existing design, approved plan, checkpoint, or unfinished execution state.
+2. If the task is stable, single-step, and low-risk, answer or act directly. Load no reference or process skill.
+3. Otherwise classify it as structured, tool-assisted, multi-workstream, or high-assurance.
+4. Reuse an applicable approved plan. Continue its next unfinished step without brainstorming or writing another plan. Replan only when requirements invalidate it, required decisions are missing, or the user asks.
+5. Select the smallest specialist whose advertised trigger matches the current need. Availability and internal claims of universal use are not selection evidence.
+
+## Superpowers boundary
+- Never invoke `superpowers:using-superpowers`; this router replaces it.
+- Do not invoke `superpowers:brainstorming`, `superpowers:writing-plans`, or another Superpowers process skill merely because it exists, the thread is long, or its instructions say it is mandatory.
+- Invoke a Superpowers specialist only when this router selects it for a genuine unmet need. Once selected, it governs only that assigned work, then returns control here.
+
+## Conditional depth
+Load only what can change the next decision: [routing](references/routing.md), [codebase reality](references/reality-model.md), [environment](references/environment-storage.md), [context](references/context-management.md), [Codex](references/platform-codex.md), [Claude](references/platform-claude.md), [delegation](references/delegation-budget.md), [verification](references/verification.md), [simplification](references/simplification.md), [preferences](references/preference-model.md), [patterns](references/pattern-promotion.md), [evolution](references/evolution-policy.md), or [side effects](references/side-effects.md).
 
 ## Invariants
-- Prefer evidence over assumption and references over copied context.
+- Existing valid work beats restarting a process.
+- Thread length alone never justifies planning, delegation, or extra context.
 - Every escalation needs expected information value and a stop condition.
-- Preferences optimize defaults, never truth, safety, explicit requirements, or project isolation.
-- Skills/hooks are promoted from repeated evidence, not one-off events.
-- External/destructive actions follow `references/side-effects.md`.
+- Deliver the result; keep routing mechanics out unless decision-relevant.

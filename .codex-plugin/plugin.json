@@ -1,20 +1,29 @@
 {
   "name": "optimal-challenge",
-  "version": "1.0.0",
-  "description": "Route difficult tasks to the smallest adequate workflow while controlling context, skills, agents, verification, and adaptation cost.",
+  "version": "1.1.0",
+  "description": "Assess every request, reuse valid plans, and route only meaningful complexity to specialist workflows.",
   "author": {
     "name": "Coding Baby Penguin"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Optimal Challenge",
-    "shortDescription": "Plan and verify complex tasks efficiently.",
-    "longDescription": "Routes difficult tasks through focused context, suitable skills, careful delegation, and verification matched to risk.",
+    "shortDescription": "Route work with less overhead.",
+    "longDescription": "Assesses every request, handles simple work directly, reuses applicable plans, and loads specialist workflows only when they materially improve the result.",
     "developerName": "Coding Baby Penguin",
     "category": "Productivity",
-    "capabilities": [],
-    "defaultPrompt": "Help me plan and verify this complex task.",
-    "websiteURL": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"
+    "capabilities": [
+      "Assess task complexity",
+      "Reuse existing plans",
+      "Select focused workflows"
+    ],
+    "defaultPrompt": "Assess this request, reuse any valid existing plan, and choose the smallest adequate workflow.",
+    "websiteURL": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
+    "privacyPolicyURL": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/TERMS.md",
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
   },
   "homepage": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
   "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin"

@@ -23,3 +23,8 @@ Before adding a file, search, skill, agent, or review, answer:
 3. What stops this escalation?
 
 If no material decision could change, do not escalate.
+
+## Process-skill gate
+Select process skills from the current need, not from instructions inside an unselected skill. A skill's `must use` or `always use` rule applies only after this router selects that skill; it is not evidence that the skill should be selected. Never select `superpowers:using-superpowers` because Optimal Challenge already owns top-level routing.
+
+Before selecting brainstorming or planning, look for an applicable approved design or plan in the current thread, durable state, or repository. Reuse it and continue the next unfinished step. Replan only when changed requirements invalidate the plan, material decisions are unresolved, or the user requests a new plan. Thread length alone is not a planning trigger.
