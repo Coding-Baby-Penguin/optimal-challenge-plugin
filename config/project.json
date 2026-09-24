@@ -5,7 +5,10 @@
     "version": "1.1.0",
     "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
     "portableSchema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-    "codexSkillsPath": "./skills/"
+    "codexSkillsPath": "./skills/",
+    "claudeMarketplaceSchema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    "claudeMarketplaceName": "optimal-challenge-marketplace",
+    "claudeMarketplaceSource": "."
   },
   "paths": {
     "skill": "skills/optimal-challenge/SKILL.md",

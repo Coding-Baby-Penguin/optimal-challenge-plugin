@@ -47,7 +47,9 @@ optimal-challenge/
 ├── config/                         canonical project-owned configuration
 ├── docs/PROJECT-STATE.md           current state and development path
 ├── .codex-plugin/plugin.json       Codex compatibility manifest
-├── .claude-plugin/plugin.json      Claude Code manifest
+├── .claude-plugin/
+│   ├── plugin.json                 Claude Code plugin manifest
+│   └── marketplace.json            Claude Code marketplace catalog
 ├── skills/optimal-challenge/
 │   ├── SKILL.md                    small runtime router
 │   ├── references/                 lazily loaded policy modules
@@ -94,7 +96,14 @@ enabled = true
 Restart Codex after changing the configuration. To force this workflow for one request, invoke `$optimal-challenge:optimal-challenge` explicitly.
 
 ### Claude Code
-Claude Code supports loading a plugin directory or ZIP for local testing:
+Add the GitHub-hosted marketplace, then install the plugin:
+
+```text
+/plugin marketplace add Coding-Baby-Penguin/optimal-challenge-plugin
+/plugin install optimal-challenge@optimal-challenge-marketplace
+```
+
+The repository must contain both `.claude-plugin/marketplace.json` for marketplace discovery and `.claude-plugin/plugin.json` for the plugin itself. Claude Code also supports loading a plugin directory or ZIP for local testing:
 
 ```bash
 claude --plugin-dir ./optimal-challenge

@@ -21,6 +21,20 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertEqual(manifests[0]["$schema"], project["plugin"]["portableSchema"])
         self.assertEqual(manifests[1]["skills"], project["plugin"]["codexSkillsPath"])
 
+    def test_claude_marketplace_agrees_with_project_config(self):
+        project = json.loads(PROJECT_CONFIG.read_text())["plugin"]
+        marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+        self.assertEqual(marketplace["$schema"], project["claudeMarketplaceSchema"])
+        self.assertEqual(marketplace["name"], project["claudeMarketplaceName"])
+        self.assertTrue(marketplace["description"])
+        self.assertEqual(len(marketplace["plugins"]), 1)
+
+        entry = marketplace["plugins"][0]
+        self.assertEqual(entry["name"], project["name"])
+        self.assertEqual(entry["version"], project["version"])
+        self.assertEqual(entry["source"], project["claudeMarketplaceSource"])
+        self.assertEqual(entry["homepage"], project["repository"])
+
     def test_skill_is_small_and_trigger_focused(self):
         text = (SKILL_DIR / "SKILL.md").read_text()
         body = text.split("---", 2)[-1]

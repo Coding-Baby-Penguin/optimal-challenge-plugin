@@ -15,7 +15,7 @@ Never store passwords, tokens, private keys, or live credentials here. Commit on
 
 ## Deliberately retained literals
 
-- Plugin manifests repeat the name, version, repository, schema, and skills path because their platforms require self-contained metadata; validation compares each copy with `project.json`.
+- Plugin and marketplace manifests repeat the name, version, repository, schemas, source, and skills path because their platforms require self-contained metadata; validation compares each copy with `project.json`.
 - Publisher, policy, and support URLs remain in manifests and user documents where they are public metadata rather than deploy-varying configuration.
 - Fake paths and placeholders in documentation remain local to their examples and must never contain machine-specific or secret values.
 - Release-history text under `submission/` records the release it describes and is not runtime configuration.

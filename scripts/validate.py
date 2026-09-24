@@ -37,6 +37,9 @@ expected_version = plugin_config.get("version")
 expected_repository = plugin_config.get("repository")
 expected_schema = plugin_config.get("portableSchema")
 expected_codex_skills_path = plugin_config.get("codexSkillsPath")
+expected_claude_marketplace_schema = plugin_config.get("claudeMarketplaceSchema")
+expected_claude_marketplace_name = plugin_config.get("claudeMarketplaceName")
+expected_claude_marketplace_source = plugin_config.get("claudeMarketplaceSource")
 
 
 # Required structure
@@ -47,6 +50,7 @@ for rel in [
     "plugin.json",
     ".codex-plugin/plugin.json",
     ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
     "skills/optimal-challenge/SKILL.md",
     "skills/optimal-challenge/agents/openai.yaml",
     "skills/optimal-challenge/references/continuity-collaboration.md",
@@ -68,6 +72,7 @@ for rel in [
 root_manifest = read_json(ROOT / "plugin.json")
 codex_manifest = read_json(ROOT / ".codex-plugin" / "plugin.json")
 claude_manifest = read_json(ROOT / ".claude-plugin" / "plugin.json")
+claude_marketplace = read_json(ROOT / ".claude-plugin" / "marketplace.json")
 
 names = {m.get("name") for m in [root_manifest, codex_manifest, claude_manifest] if isinstance(m, dict)}
 versions = {m.get("version") for m in [root_manifest, codex_manifest, claude_manifest] if isinstance(m, dict)}
@@ -76,12 +81,26 @@ check(bool(expected_version), "config/project.json missing plugin.version")
 check(bool(expected_repository), "config/project.json missing plugin.repository")
 check(bool(expected_schema), "config/project.json missing plugin.portableSchema")
 check(bool(expected_codex_skills_path), "config/project.json missing plugin.codexSkillsPath")
+check(bool(expected_claude_marketplace_schema), "config/project.json missing plugin.claudeMarketplaceSchema")
+check(bool(expected_claude_marketplace_name), "config/project.json missing plugin.claudeMarketplaceName")
+check(bool(expected_claude_marketplace_source), "config/project.json missing plugin.claudeMarketplaceSource")
 check(names == {expected_name}, f"Manifest name mismatch: {names}")
 check(versions == {expected_version}, f"Manifest version mismatch: {versions}")
 repositories = {m.get("repository") for m in [root_manifest, codex_manifest, claude_manifest] if isinstance(m, dict)}
 check(repositories == {expected_repository}, f"Manifest repository mismatch: {repositories}")
 check(root_manifest.get("$schema") == expected_schema, "Portable manifest schema mismatch")
 check(codex_manifest.get("skills") == expected_codex_skills_path, "Codex skills path mismatch")
+check(claude_marketplace.get("$schema") == expected_claude_marketplace_schema, "Claude marketplace schema mismatch")
+check(claude_marketplace.get("name") == expected_claude_marketplace_name, "Claude marketplace name mismatch")
+check(bool(claude_marketplace.get("description")), "Claude marketplace description missing")
+claude_plugins = claude_marketplace.get("plugins", []) if isinstance(claude_marketplace, dict) else []
+check(len(claude_plugins) == 1, "Claude marketplace must contain exactly one plugin")
+if len(claude_plugins) == 1 and isinstance(claude_plugins[0], dict):
+    claude_entry = claude_plugins[0]
+    check(claude_entry.get("name") == expected_name, "Claude marketplace plugin name mismatch")
+    check(claude_entry.get("version") == expected_version, "Claude marketplace plugin version mismatch")
+    check(claude_entry.get("source") == expected_claude_marketplace_source, "Claude marketplace source mismatch")
+    check(claude_entry.get("homepage") == expected_repository, "Claude marketplace homepage mismatch")
 
 # This release line intentionally ships without active hooks.
 check(not (ROOT / "hooks" / "hooks.json").exists(), "Plugin must not ship active hooks/hooks.json")
