@@ -1,1 +1,47 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+credentials.*
+!credentials.example.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Agent-local checkpoints and tool state
+.optimal-challenge/
+.codex/
+.claude/
+
+# Dependencies and virtual environments
+node_modules/
+.venv/
+venv/
+
+# Caches, test output, and logs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage/
+*.log
+logs/
+
+# Generated packages and scratch output
 dist/
+build/
+tmp/
+temp/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini

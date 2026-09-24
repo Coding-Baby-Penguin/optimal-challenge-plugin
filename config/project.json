@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "plugin": {
+    "name": "optimal-challenge",
+    "version": "1.1.0",
+    "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
+    "portableSchema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+    "codexSkillsPath": "./skills/"
+  },
+  "paths": {
+    "skill": "skills/optimal-challenge/SKILL.md",
+    "scenarios": "tests/scenarios.json",
+    "validationTest": "tests/validation/test_package.py",
+    "state": "docs/PROJECT-STATE.md",
+    "package": "dist/optimal-challenge-plugin-1.1.0.zip"
+  },
+  "commands": {
+    "validate": "python scripts/validate.py",
+    "test": "python -m unittest -v tests.validation.test_package"
+  }
+}
