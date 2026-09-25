@@ -16,6 +16,7 @@
 ## Continuity
 
 - **Blockers:**
+- **Unresolved failures:**
 - **Pending decisions:**
 - **Verification evidence:**
 - **Next concrete action:**

@@ -56,8 +56,10 @@ for rel in [
     "skills/optimal-challenge/references/continuity-collaboration.md",
     "skills/optimal-challenge/references/folder-architecture.md",
     "skills/optimal-challenge/references/configuration-governance.md",
+    "skills/optimal-challenge/references/failure-visibility.md",
     "skills/optimal-challenge/references/readme-maintenance.md",
     "skills/optimal-challenge/templates/FOLDER-PLAN.md",
+    "skills/optimal-challenge/templates/FAILURE-REPORT.md",
     "skills/optimal-challenge/templates/PROJECT-STATE.md",
     "skills/optimal-challenge/templates/QUESTION-BUNDLE.md",
     "skills/optimal-challenge/templates/README-TEMPLATE.md",
@@ -174,6 +176,10 @@ readme_policy = (REFS / "readme-maintenance.md").read_text(encoding="utf-8").low
 for phrase in ["one h1", "sentence case", "quick start", "relative links", "same change", "verify commands", "stale"]:
     check(phrase in readme_policy, f"README maintenance policy missing concept: {phrase}")
 
+failure_policy = (REFS / "failure-visibility.md").read_text(encoding="utf-8").lower()
+for phrase in ["failed operation", "evidence", "impact", "retry or fallback", "next action", "exit code", "terminal state", "degraded", "partial", "fail closed"]:
+    check(phrase in failure_policy, f"Failure visibility policy missing concept: {phrase}")
+
 check(not (SKILL.parent / "templates" / "CHECKPOINT.md").exists(), "Legacy CHECKPOINT.md must not coexist with PROJECT-STATE.md")
 check(not (SKILL.parent / "templates" / "STATE.md").exists(), "Legacy STATE.md must not coexist with PROJECT-STATE.md")
 
@@ -185,7 +191,7 @@ if isinstance(scenarios, list):
     check(len(ids) == len(set(ids)), "Duplicate scenario IDs")
     check(len(scenarios) >= 25, f"Insufficient scenario coverage: {len(scenarios)}")
     prefixes = {str(i).split("-", 1)[0] for i in ids if i}
-    required = {"direct", "ask", "research", "code", "agent", "context", "storage", "preference", "evolution", "hook", "sidefx", "simplify", "stagnation", "security", "structure", "config", "docs", "output"}
+    required = {"direct", "ask", "research", "code", "agent", "context", "storage", "preference", "evolution", "hook", "sidefx", "simplify", "stagnation", "security", "structure", "config", "docs", "output", "failure"}
     missing = required - prefixes
     check(not missing, f"Missing scenario classes: {sorted(missing)}")
     for s in scenarios:

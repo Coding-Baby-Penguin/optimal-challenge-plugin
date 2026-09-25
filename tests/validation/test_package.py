@@ -102,7 +102,7 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertIn("minimum sufficient context", text)
 
     def test_runtime_exposes_continuity_and_collaboration_policy(self):
-        router = (SKILL_DIR / "SKILL.md").read_text().lower()
+        router = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").lower()
         self.assertIn("references/continuity-collaboration.md", router)
 
         policy = (SKILL_DIR / "references" / "continuity-collaboration.md").read_text().lower()
@@ -284,6 +284,39 @@ class PackageIndependentReview(unittest.TestCase):
         ]:
             self.assertIn(heading, template)
 
+    def test_runtime_exposes_failure_visibility_contract(self):
+        router = (SKILL_DIR / "SKILL.md").read_text().lower()
+        self.assertIn("references/failure-visibility.md", router)
+
+        policy = (SKILL_DIR / "references" / "failure-visibility.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "failed operation",
+            "evidence",
+            "impact",
+            "retry or fallback",
+            "next action",
+            "exit code",
+            "terminal state",
+            "degraded",
+            "partial",
+            "fail closed",
+        ]:
+            self.assertIn(phrase, policy)
+
+        template = (SKILL_DIR / "templates" / "FAILURE-REPORT.md").read_text(encoding="utf-8").lower()
+        for field in [
+            "status:",
+            "failed operation:",
+            "evidence:",
+            "impact:",
+            "retry or fallback:",
+            "next action:",
+        ]:
+            self.assertIn(field, template)
+
+        project_state = (SKILL_DIR / "templates" / "PROJECT-STATE.md").read_text(encoding="utf-8").lower()
+        self.assertIn("unresolved failures:", project_state)
+
     def test_repository_readme_follows_maintained_style(self):
         text = (ROOT / "README.md").read_text()
         h1s = []
@@ -300,7 +333,7 @@ class PackageIndependentReview(unittest.TestCase):
     def test_scenario_matrix_has_positive_negative_and_pressure_cases(self):
         scenarios = json.loads((ROOT / "tests" / "scenarios.json").read_text())
         ids = {s["id"] for s in scenarios}
-        for required in ["direct-01", "direct-04", "plan-01", "plan-02", "skill-01", "agent-03", "ask-03", "context-03", "context-04", "config-01", "config-02", "docs-01", "output-02", "security-01", "security-02", "structure-01", "structure-02", "evolution-02", "hook-02", "stagnation-01"]:
+        for required in ["direct-01", "direct-04", "plan-01", "plan-02", "skill-01", "agent-03", "ask-03", "context-03", "context-04", "config-01", "config-02", "docs-01", "failure-01", "failure-02", "failure-03", "failure-04", "output-02", "security-01", "security-02", "structure-01", "structure-02", "evolution-02", "hook-02", "stagnation-01"]:
             self.assertIn(required, ids)
         self.assertGreaterEqual(len(scenarios), 25)
 

@@ -30,6 +30,7 @@ These behaviors belong to the plugin. The repository files document, template, a
 7. **Configuration governance:** hard-code audits classify invariants, deploy-varying values, secrets, fixtures, and examples; project-owned configuration lives under `config/` behind one documented access path.
 8. **Maintained README:** installation, configuration, usage, paths, commands, and release details are updated and verified in the same change that alters them.
 9. **Unified project state:** `docs/PROJECT-STATE.md` is the single source for current verified state and the Now / Next / Later development path.
+10. **Visible failures:** required work cannot silently degrade into success; failures, partial results, skipped checks, retries, fallbacks, and unfinished background work retain evidence, impact, and a concrete recovery action.
 
 The detailed runtime contracts live in the lazily loaded files under `skills/optimal-challenge/references/`. The templates are optional until their trigger occurs; they are not loaded into every simple request.
 
