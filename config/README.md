@@ -6,12 +6,86 @@ Tool-required manifests remain at the repository root or their mandated discover
 
 ## Precedence
 
-1. Stable code defaults and platform requirements.
-2. Committed configuration in this folder.
-3. Ignored local environment overrides.
-4. Runtime secret injection from environment variables or an approved secrets manager.
+Orchestration policy has one access path: call
+`scripts.orchestration_config.load_effective_config(...)`. From highest to
+lowest authority, effective settings come from system/developer/host/repository
+instructions, safety and permission constraints, explicit current-request
+constraints, `.optimal-challenge/orchestration.local.json`, committed
+`orchestration.json`, and built-in defaults. The Python loader applies the last
+three machine-readable layers; callers remain responsible for higher-authority
+instructions and pass current-request settings as `task_override`.
+
+`orchestration.schema.json` validates the complete effective configuration.
+The local file uses the same key tree but may omit unchanged keys because the
+loader merges it into a complete configuration before validation. Unknown
+keys fail. The existing
+`.optimal-challenge/` ignore rule covers `orchestration.local.json` and all
+reconstructable runtime state.
 
 Never store passwords, tokens, private keys, or live credentials here. Commit only sanitized examples and document the type, purpose, default, and allowed values of every setting.
+
+## Orchestration settings
+
+| Key | Committed default | Allowed values and purpose |
+|---|---:|---|
+| `schema_version` | `1` | Configuration contract version; only `1` is accepted. |
+| `mode` | `auto` | `inline-only`, `auto`, or `team-requested`. Direct fast-path work remains quiet. |
+| `profile` | `balanced` | `economy`, `balanced`, `quality`, or `custom`. Selecting a named profile without explicit weights loads its documented weights. |
+| `objective_weights.quality` | `0.45` | Number from 0 to 1. Balanced utility weight; Economy is `0.35`, Quality is `0.50`. |
+| `objective_weights.cost` | `0.20` | Number from 0 to 1. Economy is `0.35`, Quality is `0.10`. |
+| `objective_weights.latency` | `0.10` | Number from 0 to 1. Economy is `0.10`, Quality is `0.05`. |
+| `objective_weights.attention` | `0.10` | Number from 0 to 1 for every named profile. |
+| `objective_weights.rework` | `0.15` | Number from 0 to 1. Economy is `0.10`, Quality is `0.25`. |
+
+The five objective weights must sum to 1. Named profiles use the fixed values
+above. Custom begins with Balanced weights unless the same layer supplies its
+own normalized values.
+
+| Key | Default | Allowed values and purpose |
+|---|---:|---|
+| `team_limits.max_active_specialists` | `3` | Integer 0 to 3; the normal active-specialist cap, excluding the coordinator. |
+| `team_limits.exact_specialists` | `null` | `null` or integer 0 to 32. An explicit count is additionally bounded by `min(32, detected_host_max)`. |
+| `team_limits.delegation_margin` | `1` | Integer 1 to 12; the Custom profile's required benefit-minus-cost margin. |
+| `team_limits.allow_mode_margin_override` | `false` | Boolean. Custom does not let `team-requested` reduce its margin unless explicitly enabled. |
+| `team_limits.retry_limit` | `1` | Integer 0 to 12; retries still require new information or capability. |
+| `team_limits.capability_class` | `standard` | `economy`, `standard`, `reasoning`, or `frontier`; provider-neutral only. |
+| `premise_gate.enabled` | `true` | Boolean master switch for non-direct premise checks. |
+| `premise_gate.apply_to_direct_fast_path` | `false` | Boolean; keep `false` to preserve quiet stable, single-step, low-risk work. |
+| `premise_gate.risk_threshold` | `4` | Integer 0 to 9; minimum risk product for a blocking user question. |
+| `premise_gate.question_value_threshold` | `0` | Integer -3 to 9; question value must be greater than this threshold. |
+| `premise_gate.investigate_first` | `true` | Boolean; resolve cheaply knowable facts before asking. |
+| `premise_gate.use_reversible_defaults` | `true` | Boolean; proceed with recorded safe defaults when allowed. |
+| `verification.default_depth` | `targeted` | `self-check`, `targeted`, or `independent`. Mandatory consequence rules still outrank this default. |
+| `verification.review_margin` | `3` | Integer 1 to 27; Balanced review-value margin. |
+| `verification.mandatory_independent_review` | `false` | Boolean task-wide override; consequence-based mandatory review remains in force. |
+| `verification.compensating_oracle_requires_user_acceptance` | `true` | Boolean; unavailable mandatory review is not silently waived. |
+| `persistence_privacy.runtime_state` | `local` | `none`, `local`, or `provider`; does not itself activate provider retention. |
+| `persistence_privacy.state_directory` | `.optimal-challenge` | Non-empty path for disposable local state. |
+| `persistence_privacy.persist_transcripts` | `false` | Boolean; transcripts are excluded by default. |
+| `persistence_privacy.persist_sensitive_data` | `false` | Boolean; credentials, sensitive traits, and raw private data remain excluded. |
+
+### Budget truthfulness
+
+| Key | Default | Allowed values and purpose |
+|---|---:|---|
+| `budget.unit` | `null` | `null`, `credits`, `tokens`, `seconds`, `currency`, `tool_calls`, or `model_calls`. Units are never converted without a verified mapping. |
+| `budget.limit` | `null` | `null` or a positive number in the configured unit. Unit and limit are set or cleared together. |
+| `budget.measurement` | `unavailable` | `unavailable`, `estimated`, or `observed`. |
+| `budget.enforcement` | `advisory` | `advisory`, `local_enforced`, or `provider_enforced`. |
+| `budget.measurement_source` | `null` | `null` or a non-empty description of the authoritative counter. |
+| `budget.soft_threshold` | `null` | `null` or a positive value no greater than `limit`; optional work is reduced at this point. |
+
+Any measurement may support an advisory ceiling. `local_enforced` and
+`provider_enforced` are valid only with `observed` measurement and a verified
+matching source/stop primitive supplied by the adapter. Therefore the defaults
+are advisory and do not promise automatic prevention, exact remaining spend,
+or cancellation of running work.
+
+Example one-request override:
+
+```python
+load_effective_config(root, task_override={"mode": "team-requested", "profile": "quality"})
+```
 
 ## Deliberately retained literals
 

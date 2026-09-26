@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/config/orchestration.schema.json",
+  "title": "Optimal Challenge orchestration configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "profile",
+    "objective_weights",
+    "team_limits",
+    "premise_gate",
+    "verification",
+    "persistence_privacy",
+    "budget"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "mode": {"enum": ["inline-only", "auto", "team-requested"]},
+    "profile": {"enum": ["economy", "balanced", "quality", "custom"]},
+    "objective_weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "cost", "latency", "attention", "rework"],
+      "properties": {
+        "quality": {"type": "number", "minimum": 0, "maximum": 1},
+        "cost": {"type": "number", "minimum": 0, "maximum": 1},
+        "latency": {"type": "number", "minimum": 0, "maximum": 1},
+        "attention": {"type": "number", "minimum": 0, "maximum": 1},
+        "rework": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "team_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_active_specialists",
+        "exact_specialists",
+        "delegation_margin",
+        "allow_mode_margin_override",
+        "retry_limit",
+        "capability_class"
+      ],
+      "properties": {
+        "max_active_specialists": {"type": "integer", "minimum": 0, "maximum": 3},
+        "exact_specialists": {"type": ["integer", "null"], "minimum": 0, "maximum": 32},
+        "delegation_margin": {"type": "integer", "minimum": 1, "maximum": 12},
+        "allow_mode_margin_override": {"type": "boolean", "default": false},
+        "retry_limit": {"type": "integer", "minimum": 0, "maximum": 12},
+        "capability_class": {"enum": ["economy", "standard", "reasoning", "frontier"]}
+      }
+    },
+    "premise_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "apply_to_direct_fast_path",
+        "risk_threshold",
+        "question_value_threshold",
+        "investigate_first",
+        "use_reversible_defaults"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "apply_to_direct_fast_path": {"type": "boolean"},
+        "risk_threshold": {"type": "integer", "minimum": 0, "maximum": 9},
+        "question_value_threshold": {"type": "integer", "minimum": -3, "maximum": 9},
+        "investigate_first": {"type": "boolean"},
+        "use_reversible_defaults": {"type": "boolean"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_depth",
+        "review_margin",
+        "mandatory_independent_review",
+        "compensating_oracle_requires_user_acceptance"
+      ],
+      "properties": {
+        "default_depth": {"enum": ["self-check", "targeted", "independent"]},
+        "review_margin": {"type": "integer", "minimum": 1, "maximum": 27},
+        "mandatory_independent_review": {"type": "boolean"},
+        "compensating_oracle_requires_user_acceptance": {"type": "boolean"}
+      }
+    },
+    "persistence_privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_state", "state_directory", "persist_transcripts", "persist_sensitive_data"],
+      "properties": {
+        "runtime_state": {"enum": ["none", "local", "provider"]},
+        "state_directory": {"type": "string", "minLength": 1},
+        "persist_transcripts": {"type": "boolean"},
+        "persist_sensitive_data": {"type": "boolean"}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "limit", "measurement", "enforcement", "measurement_source", "soft_threshold"],
+      "properties": {
+        "unit": {
+          "type": ["string", "null"],
+          "enum": [null, "credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"]
+        },
+        "limit": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "measurement": {"enum": ["unavailable", "estimated", "observed"]},
+        "enforcement": {"enum": ["advisory", "local_enforced", "provider_enforced"]},
+        "measurement_source": {"type": ["string", "null"]},
+        "soft_threshold": {"type": ["number", "null"], "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

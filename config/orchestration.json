@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "mode": "auto",
+  "profile": "balanced",
+  "objective_weights": {
+    "quality": 0.45,
+    "cost": 0.2,
+    "latency": 0.1,
+    "attention": 0.1,
+    "rework": 0.15
+  },
+  "team_limits": {
+    "max_active_specialists": 3,
+    "exact_specialists": null,
+    "delegation_margin": 1,
+    "allow_mode_margin_override": false,
+    "retry_limit": 1,
+    "capability_class": "standard"
+  },
+  "premise_gate": {
+    "enabled": true,
+    "apply_to_direct_fast_path": false,
+    "risk_threshold": 4,
+    "question_value_threshold": 0,
+    "investigate_first": true,
+    "use_reversible_defaults": true
+  },
+  "verification": {
+    "default_depth": "targeted",
+    "review_margin": 3,
+    "mandatory_independent_review": false,
+    "compensating_oracle_requires_user_acceptance": true
+  },
+  "persistence_privacy": {
+    "runtime_state": "local",
+    "state_directory": ".optimal-challenge",
+    "persist_transcripts": false,
+    "persist_sensitive_data": false
+  },
+  "budget": {
+    "unit": null,
+    "limit": null,
+    "measurement": "unavailable",
+    "enforcement": "advisory",
+    "measurement_source": null,
+    "soft_threshold": null
+  }
+}
