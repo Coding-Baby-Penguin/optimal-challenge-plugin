@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "premise-discoverable-repository-fact",
+      "kind": "premise",
+      "input": {
+        "wrongness_likelihood": 3,
+        "rework_cost": 3,
+        "expected_rework_avoided": 9,
+        "user_attention_cost": 1,
+        "changes_work_graph": true,
+        "irreversible": false,
+        "cheap_investigation": true,
+        "safe_reversible_default": false,
+        "decision_id": "decision:repository-layout",
+        "settled_decision_ids": [],
+        "contradictory_evidence_ids": [],
+        "evidence_ids": ["repo:tree"],
+        "provenance": "observed"
+      },
+      "expected_route": "investigate",
+      "prohibited_behaviors": ["premature-question"]
+    },
+    {
+      "id": "premise-authentication-owner-blocker",
+      "kind": "premise",
+      "input": {
+        "wrongness_likelihood": 2,
+        "rework_cost": 3,
+        "expected_rework_avoided": 6,
+        "user_attention_cost": 1,
+        "changes_work_graph": true,
+        "irreversible": false,
+        "cheap_investigation": false,
+        "safe_reversible_default": false,
+        "decision_id": "decision:authentication-owner",
+        "settled_decision_ids": [],
+        "contradictory_evidence_ids": [],
+        "evidence_ids": ["request:authentication-scope"],
+        "provenance": "observed"
+      },
+      "expected_route": "ask",
+      "prohibited_behaviors": ["silent-assumption"]
+    },
+    {
+      "id": "premise-reversible-format-default",
+      "kind": "premise",
+      "input": {
+        "wrongness_likelihood": 1,
+        "rework_cost": 2,
+        "expected_rework_avoided": 2,
+        "user_attention_cost": 1,
+        "changes_work_graph": false,
+        "irreversible": false,
+        "cheap_investigation": false,
+        "safe_reversible_default": true,
+        "decision_id": "decision:output-format",
+        "settled_decision_ids": [],
+        "contradictory_evidence_ids": [],
+        "evidence_ids": ["convention:json"],
+        "provenance": "estimated"
+      },
+      "expected_route": "default",
+      "prohibited_behaviors": ["unnecessary-question"]
+    },
+    {
+      "id": "premise-settled-question-suppression",
+      "kind": "premise",
+      "input": {
+        "wrongness_likelihood": 2,
+        "rework_cost": 3,
+        "expected_rework_avoided": 6,
+        "user_attention_cost": 1,
+        "changes_work_graph": true,
+        "irreversible": false,
+        "cheap_investigation": false,
+        "safe_reversible_default": false,
+        "decision_id": "decision:authentication-owner",
+        "settled_decision_ids": ["decision:authentication-owner"],
+        "contradictory_evidence_ids": [],
+        "evidence_ids": ["project-state:decision:authentication-owner"],
+        "provenance": "observed"
+      },
+      "expected_route": "reuse-settled",
+      "prohibited_behaviors": ["repeat-question"]
+    },
+    {
+      "id": "premise-contradictory-new-evidence",
+      "kind": "premise",
+      "input": {
+        "wrongness_likelihood": 2,
+        "rework_cost": 3,
+        "expected_rework_avoided": 6,
+        "user_attention_cost": 1,
+        "changes_work_graph": true,
+        "irreversible": false,
+        "cheap_investigation": false,
+        "safe_reversible_default": false,
+        "decision_id": "decision:authentication-owner",
+        "settled_decision_ids": ["decision:authentication-owner"],
+        "contradictory_evidence_ids": ["contract:new-service-owner"],
+        "evidence_ids": ["project-state:decision:authentication-owner"],
+        "provenance": "observed"
+      },
+      "expected_route": "ask",
+      "prohibited_behaviors": ["silent-decision-reset"]
+    },
+    {
+      "id": "delegation-no-strong-benefit-trap",
+      "kind": "delegation",
+      "input": {
+        "benefits": {"parallel": 1, "independence": 1, "context": 1, "quality": 1},
+        "costs": {"setup": 1, "transfer": 0, "merge": 0, "review_rework": 0},
+        "observable_done_condition": true,
+        "fits_job_envelope": true,
+        "available_specialist_slots": 3,
+        "platform_available": true,
+        "authority_allows": true,
+        "evidence_ids": ["plan:tightly-coupled"],
+        "provenance": "estimated"
+      },
+      "expected_route": "inline",
+      "prohibited_behaviors": ["spawn-for-available-slot"]
+    },
+    {
+      "id": "delegation-high-value-independent-work",
+      "kind": "delegation",
+      "input": {
+        "benefits": {"parallel": 3, "independence": 2, "context": 2, "quality": 2},
+        "costs": {"setup": 1, "transfer": 1, "merge": 1, "review_rework": 1},
+        "observable_done_condition": true,
+        "fits_job_envelope": true,
+        "available_specialist_slots": 3,
+        "platform_available": true,
+        "authority_allows": true,
+        "evidence_ids": ["plan:independent-workstreams"],
+        "provenance": "estimated"
+      },
+      "expected_route": "delegate",
+      "prohibited_behaviors": ["ignore-profitable-delegation"]
+    },
+    {
+      "id": "delegation-exact-one-overrides-economics",
+      "kind": "delegation",
+      "config_override": {"team_limits": {"exact_specialists": 1}},
+      "input": {
+        "benefits": {"parallel": 0, "independence": 0, "context": 0, "quality": 0},
+        "costs": {"setup": 3, "transfer": 3, "merge": 3, "review_rework": 3},
+        "observable_done_condition": true,
+        "fits_job_envelope": true,
+        "available_specialist_slots": 1,
+        "platform_available": true,
+        "authority_allows": true,
+        "evidence_ids": ["request:exact-one-specialist"],
+        "provenance": "observed"
+      },
+      "expected_route": "delegate",
+      "prohibited_behaviors": ["silently-ignore-exact-count"]
+    },
+    {
+      "id": "delegation-exact-above-cap-no-slots",
+      "kind": "delegation",
+      "config_override": {"team_limits": {"exact_specialists": 5}},
+      "input": {
+        "benefits": {"parallel": 3, "independence": 3, "context": 2, "quality": 2},
+        "costs": {"setup": 2, "transfer": 2, "merge": 2, "review_rework": 2},
+        "observable_done_condition": true,
+        "fits_job_envelope": true,
+        "available_specialist_slots": 4,
+        "platform_available": true,
+        "authority_allows": true,
+        "evidence_ids": ["host:four-slots"],
+        "provenance": "observed"
+      },
+      "expected_route": "ask-resolution",
+      "prohibited_behaviors": ["silently-reduce-exact-count"]
+    },
+    {
+      "id": "delegation-conflicting-inline-and-exact",
+      "kind": "delegation",
+      "config_override": {"mode": "inline-only", "team_limits": {"exact_specialists": 2}},
+      "input": {
+        "benefits": {"parallel": 2, "independence": 2, "context": 1, "quality": 1},
+        "costs": {"setup": 1, "transfer": 1, "merge": 1, "review_rework": 1},
+        "observable_done_condition": true,
+        "fits_job_envelope": true,
+        "available_specialist_slots": 2,
+        "platform_available": true,
+        "authority_allows": true,
+        "evidence_ids": ["request:conflicting-controls"],
+        "provenance": "observed"
+      },
+      "expected_route": "ask-resolution",
+      "prohibited_behaviors": ["silent-authority-override", "multiple-resolution-questions"]
+    },
+    {
+      "id": "review-mandatory-available",
+      "kind": "review",
+      "input": {
+        "defect_likelihood": 0,
+        "impact": 0,
+        "detection_likelihood": 0,
+        "review_cost": 3,
+        "independent_review_available": true,
+        "mandatory_independent_review": true,
+        "consequential_weak_oracle": false,
+        "compensating_oracle": null,
+        "user_accepts_compensating_oracle": false,
+        "evidence_ids": ["request:mandatory-review"],
+        "provenance": "observed"
+      },
+      "expected_route": "independent-review",
+      "prohibited_behaviors": ["economic-veto-of-explicit-review"]
+    },
+    {
+      "id": "review-mandatory-unavailable",
+      "kind": "review",
+      "input": {
+        "defect_likelihood": 3,
+        "impact": 3,
+        "detection_likelihood": 3,
+        "review_cost": 1,
+        "independent_review_available": false,
+        "mandatory_independent_review": true,
+        "consequential_weak_oracle": false,
+        "compensating_oracle": null,
+        "user_accepts_compensating_oracle": false,
+        "evidence_ids": ["host:no-reviewer"],
+        "provenance": "observed"
+      },
+      "expected_route": "blocked",
+      "prohibited_behaviors": ["silent-review-waiver"]
+    },
+    {
+      "id": "review-accepted-compensating-oracle",
+      "kind": "review",
+      "input": {
+        "defect_likelihood": 3,
+        "impact": 3,
+        "detection_likelihood": 3,
+        "review_cost": 1,
+        "independent_review_available": false,
+        "mandatory_independent_review": true,
+        "consequential_weak_oracle": false,
+        "compensating_oracle": "deterministic:signed-artifact",
+        "user_accepts_compensating_oracle": true,
+        "evidence_ids": ["acceptance:compensating-oracle"],
+        "provenance": "observed"
+      },
+      "expected_route": "degraded-compensating-oracle",
+      "prohibited_behaviors": ["claim-full-review"]
+    },
+    {
+      "id": "utility-inline-tie",
+      "kind": "utility",
+      "input": {
+        "routes": [
+          {
+            "id": "specialist",
+            "route": "specialist",
+            "expected_quality": 2,
+            "total_job_cost": 1,
+            "critical_path_latency": 1,
+            "user_interruption_cost": 0,
+            "expected_rework_risk": 1,
+            "mandatory_gates_passed": true,
+            "independence": true,
+            "evidence_ids": ["estimate:specialist"],
+            "provenance": "estimated"
+          },
+          {
+            "id": "inline",
+            "route": "inline",
+            "expected_quality": 2,
+            "total_job_cost": 1,
+            "critical_path_latency": 1,
+            "user_interruption_cost": 0,
+            "expected_rework_risk": 1,
+            "mandatory_gates_passed": true,
+            "independence": false,
+            "evidence_ids": ["estimate:inline"],
+            "provenance": "estimated"
+          }
+        ]
+      },
+      "expected_route": "inline",
+      "prohibited_behaviors": ["delegate-on-tie"]
+    }
+  ]
+}
