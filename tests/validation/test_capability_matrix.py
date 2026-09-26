@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unittest
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -139,24 +139,39 @@ def evidence(
     version: str = "codex-host/1.2.3",
     capability: str = "native_resume",
     provenance: str = "live_detection",
+    support_level: str = "observed",
     **overrides,
 ) -> TrustedCapabilityEvidence:
-    issued = issue_adapter_evidence(
-        surface_id=surface,
-        capability=capability,
-        support_level="observed",
-        adapter_id=(
-            ADAPTER_IDS[surface] if provenance == "live_detection" else "capability-acceptance-harness"
-        ),
-        evidence_id="run-17" if provenance == "live_detection" else "run-11",
-        verified_version=version,
-        verified_at=NOW - timedelta(minutes=30),
-        expires_at=NOW + timedelta(hours=1),
-        provenance=provenance,
-        required_fallback=CAPABILITIES[capability],
-        proof=proof_for(capability, surface, version),
-    )
-    return replace(issued, **overrides)
+    unexpected = set(overrides) - {"proof"}
+    if unexpected:
+        raise AssertionError(f"unsupported evidence helper overrides: {sorted(unexpected)}")
+    selected_proof = overrides.get("proof", proof_for(capability, surface, version))
+
+    def issue(proof):
+        return issue_adapter_evidence(
+            surface_id=surface,
+            capability=capability,
+            support_level=support_level,
+            adapter_id=(
+                ADAPTER_IDS[surface]
+                if provenance == "live_detection"
+                else "capability-acceptance-harness"
+            ),
+            evidence_id="run-17" if provenance == "live_detection" else "run-11",
+            verified_version=version,
+            verified_at=NOW - timedelta(minutes=30),
+            expires_at=NOW + timedelta(hours=1),
+            provenance=provenance,
+            required_fallback=CAPABILITIES[capability],
+            proof=proof,
+        )
+
+    try:
+        return issue(selected_proof)
+    except ValueError:
+        if "proof" not in overrides:
+            raise
+        return replace(issue(proof_for(capability, surface, version)), proof=selected_proof)
 
 
 class CapabilityTrustBoundaryTests(unittest.TestCase):
@@ -216,8 +231,23 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
         ordinary = TrustedCapabilityEvidence(**fields)
         forged = replace(issued, _attestation=object())
         serialized = asdict(issued)
+        copied = copy(issued)
+        replaced_without_changes = replace(issued)
+        replaced_evidence_ref = replace(issued, evidence_ref="live:laundered")
+        replaced_native_handle = replace(
+            issued,
+            proof=replace(issued.proof, native_handle_ref="handle:laundered"),
+        )
 
-        for claim in [ordinary, forged, serialized]:
+        for claim in [
+            ordinary,
+            forged,
+            serialized,
+            copied,
+            replaced_without_changes,
+            replaced_evidence_ref,
+            replaced_native_handle,
+        ]:
             with self.subTest(claim=type(claim).__name__):
                 result = resolve_capability("codex-local", claim, None, policy(), NOW)
                 self.assertEqual(result["support_level"], "unknown")
@@ -225,6 +255,26 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
 
         legitimate = resolve_capability("codex-local", issued, None, policy(), NOW)
         self.assertEqual(legitimate["support_level"], "observed")
+
+    def test_attested_record_cannot_be_replaced_across_capabilities(self):
+        original = evidence(capability="tracing")
+        for capability in ("local_enforcement", "provider_enforcement"):
+            laundered = replace(
+                original,
+                capability=capability,
+                required_fallback=CAPABILITIES[capability],
+                proof=proof_for(capability, "codex-local", "codex-host/1.2.3"),
+            )
+            with self.subTest(capability=capability):
+                result = resolve_capability(
+                    "codex-local",
+                    laundered,
+                    None,
+                    policy(capability=capability),
+                    NOW,
+                )
+                self.assertEqual(result["support_level"], "unknown")
+                self.assertIn("issued object", result["reason"])
 
     def test_malformed_evidence_fields_resolve_unknown_without_exceptions(self):
         malformed = {
@@ -279,7 +329,7 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
                     "codex-local", replace(evidence(), **{field: value}), None, policy(), NOW
                 )
                 self.assertEqual(result["support_level"], "unknown")
-                self.assertIn(field, result["reason"])
+                self.assertIn("issued object", result["reason"])
 
     def test_all_capabilities_require_their_exact_closed_proof_type(self):
         wrong_proof = NativeResumeProof(
@@ -366,7 +416,12 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
                 selected_policy = policy(surface=surface, version=version, capability=capability)
                 live_record = evidence(surface=surface, version=version, capability=capability)
                 bad_proof = replace(live_record.proof, stop_primitive="arbitrary_stop")
-                bad_live = replace(live_record, proof=bad_proof)
+                bad_live = evidence(
+                    surface=surface,
+                    version=version,
+                    capability=capability,
+                    proof=bad_proof,
+                )
                 acceptance_record = (
                     evidence(
                         surface=surface,
@@ -485,7 +540,7 @@ class CapabilityPrecedenceTests(unittest.TestCase):
     def test_explicit_unsupported_evidence_is_preserved(self):
         result = resolve_capability(
             "codex-local",
-            replace(evidence(), support_level="unsupported"),
+            evidence(support_level="unsupported"),
             None,
             policy(),
             NOW,
@@ -538,7 +593,6 @@ class ApiSdkDualEvidenceTests(unittest.TestCase):
             surface=surface,
             version=version,
             provenance="acceptance_run",
-            detector_id="acceptance:capability-harness",
         )
         return selected_policy, live_record, acceptance_record
 
@@ -671,6 +725,9 @@ class PlatformMatrixDocumentationTests(unittest.TestCase):
                 "process-local attestation",
                 "not a cryptographic signature",
                 "serialization cannot recreate",
+                "exact issued object identity",
+                "payload digest",
+                "copies or replacements",
             ]:
                 self.assertIn(phrase, text)
 

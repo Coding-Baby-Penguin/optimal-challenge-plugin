@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import json
+import weakref
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, TypeAlias
 
@@ -111,7 +114,7 @@ CapabilityProof: TypeAlias = (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class TrustedCapabilityEvidence:
     """Closed adapter output; configuration mappings never satisfy this contract."""
 
@@ -141,6 +144,10 @@ _PROOF_TYPES = (
     ParallelExecutionProof,
     TracingProof,
 )
+_ISSUED_EVIDENCE: dict[
+    int,
+    tuple[weakref.ReferenceType[TrustedCapabilityEvidence], str],
+] = {}
 
 
 def _is_text(value: Any) -> bool:
@@ -208,6 +215,56 @@ def _evidence_shape_error(evidence: TrustedCapabilityEvidence) -> str | None:
     if type(evidence.executable_adapter) is not bool:
         return "malformed evidence: executable_adapter must be a boolean"
     return _proof_shape_error(evidence.proof)
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return _iso_timestamp(value)
+    if is_dataclass(value):
+        return {
+            "type": type(value).__name__,
+            "fields": {
+                item.name: _canonical_value(getattr(value, item.name))
+                for item in fields(value)
+                if item.name != "_attestation"
+            },
+        }
+    return value
+
+
+def _payload_digest(evidence: TrustedCapabilityEvidence) -> str:
+    payload = {
+        item.name: _canonical_value(getattr(evidence, item.name))
+        for item in fields(evidence)
+        if item.name != "_attestation"
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _register_issued_evidence(evidence: TrustedCapabilityEvidence) -> None:
+    identity = id(evidence)
+
+    def remove_if_current(reference: weakref.ReferenceType[TrustedCapabilityEvidence]) -> None:
+        current = _ISSUED_EVIDENCE.get(identity)
+        if current is not None and current[0] is reference:
+            _ISSUED_EVIDENCE.pop(identity, None)
+
+    reference = weakref.ref(evidence, remove_if_current)
+    _ISSUED_EVIDENCE[identity] = (reference, _payload_digest(evidence))
+
+
+def _issuance_error(evidence: TrustedCapabilityEvidence) -> str | None:
+    issued = _ISSUED_EVIDENCE.get(id(evidence))
+    if issued is None or issued[0]() is not evidence:
+        return "adapter attestation is not bound to this exact issued object"
+    try:
+        current_digest = _payload_digest(evidence)
+    except (TypeError, ValueError, OverflowError):
+        return "adapter attestation payload is malformed"
+    if current_digest != issued[1]:
+        return "adapter attestation payload digest does not match issuance"
+    return None
 
 
 def issue_adapter_evidence(
@@ -283,6 +340,7 @@ def issue_adapter_evidence(
     evidence_error = _evidence_shape_error(evidence)
     if evidence_error:
         raise ValueError(evidence_error)
+    _register_issued_evidence(evidence)
     return evidence
 
 
@@ -510,6 +568,9 @@ def _evidence_error(
     shape_error = _evidence_shape_error(evidence)
     if shape_error:
         return shape_error
+    issuance_error = _issuance_error(evidence)
+    if issuance_error:
+        return issuance_error
     if evidence.surface_id != surface:
         return "wrong surface in capability evidence"
     if policy["verified_version"] == "unavailable":
