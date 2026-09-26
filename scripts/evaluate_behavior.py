@@ -55,7 +55,7 @@ ARM_POLICIES = {
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_FILES = {
     ("prompt_hashes", "router"): ROOT / "skills" / "optimal-challenge" / "SKILL.md",
-    ("prompt_hashes", "question_bundle"): ROOT / "skills" / "optimal-challenge" / "templates" / "question-bundle.md",
+    ("prompt_hashes", "question_bundle"): ROOT / "skills" / "optimal-challenge" / "templates" / "QUESTION-BUNDLE.md",
     ("fixture_hashes", "behavioral_acceptance"): ROOT / "tests" / "behavioral-acceptance.json",
     ("fixture_hashes", "team_routing"): ROOT / "tests" / "team-routing.json",
     (None, "config_sha256"): ROOT / "config" / "orchestration.json",
@@ -345,7 +345,7 @@ def _validate_isolation(
 
 
 def _validate_question(
-    record: Mapping[str, Any], case: Mapping[str, Any], path: str, errors: list[str]
+    record: Mapping[str, Any], case: Mapping[str, Any], arm_id: str, path: str, errors: list[str]
 ) -> None:
     result = _mapping(record.get("question_result"))
     expected = case.get("expected_question_count")
@@ -356,11 +356,23 @@ def _validate_question(
         errors.append(f"{path} question result asked count differs from contract")
     contract = _mapping(case.get("question_contract"))
     if expected:
-        for field in ("decision_id", "recommendation", "impact", "next_step"):
+        for field in ("decision_id", "bundle", "recommendation", "impact", "next_step"):
             if not _is_text(result.get(field)):
                 errors.append(f"{path} question result {field.replace('_', ' ')} is required")
-        if contract and result.get("decision_id") != contract.get("decision_id"):
-            errors.append(f"{path} question result decision id differs from contract")
+            elif contract and result.get(field) != contract.get(field):
+                errors.append(f"{path} question result {field.replace('_', ' ')} differs from contract")
+        actual = _mapping(result.get("actual_question"))
+        if actual is None or not _sanitized_ref(actual.get("evidence_ref")):
+            errors.append(f"{path} actual question reference is required")
+        else:
+            expected_ref = f"question:{arm_id}:{case.get('id')}:{record.get('replicate_id')}"
+            if actual.get("evidence_ref") != expected_ref:
+                errors.append(f"{path} actual question reference does not bind arm/case/replicate")
+            for field in ("decision_id", "bundle", "recommendation", "impact", "next_step"):
+                if contract and actual.get(field) != contract.get(field):
+                    errors.append(f"{path} actual question {field.replace('_', ' ')} differs from contract")
+    elif result.get("actual_question") is not None or any(result.get(field) is not None for field in ("decision_id", "bundle", "recommendation", "impact", "next_step")):
+        errors.append(f"{path} suppressed question must not invent actual question content")
     suppression = _mapping(result.get("suppression"))
     if suppression is None or not isinstance(suppression.get("applied"), bool) or not _is_text(suppression.get("reason")):
         errors.append(f"{path} question suppression result is required")
@@ -370,11 +382,127 @@ def _validate_question(
         errors.append(f"{path} settled question suppression must be applied with evidence")
 
 
+def _semantic_inputs(
+    value: Any, contract: Mapping[str, Any], path: str, errors: list[str]
+) -> Mapping[str, Any] | None:
+    initial_error_count = len(errors)
+    inputs = _mapping(value)
+    schemas = _mapping(contract.get("inputs"))
+    if inputs is None or schemas is None:
+        errors.append(f"{path} semantic inputs and schemas are required")
+        return None
+    if set(inputs) != set(schemas):
+        errors.append(f"{path} semantic input keys must exactly match the canonical formula contract")
+    for field, schema_value in schemas.items():
+        schema = _mapping(schema_value) or {}
+        item = inputs.get(field)
+        kind = schema.get("type")
+        if kind == "number":
+            if not _is_number(item):
+                errors.append(f"{path} input {field} must be a finite number")
+            elif float(item) < float(schema.get("minimum", -math.inf)) or float(item) > float(schema.get("maximum", math.inf)):
+                errors.append(f"{path} input {field} is outside the canonical range")
+        elif kind == "integer":
+            if not isinstance(item, int) or isinstance(item, bool):
+                errors.append(f"{path} input {field} must be an integer")
+            elif item < int(schema.get("minimum", 0)) or item > int(schema.get("maximum", 100)):
+                errors.append(f"{path} input {field} is outside the canonical integer range")
+        elif kind == "boolean":
+            if not isinstance(item, bool):
+                errors.append(f"{path} input {field} must be boolean")
+        elif kind == "string":
+            if not _is_text(item) or len(str(item)) < int(schema.get("minLength", 1)):
+                errors.append(f"{path} input {field} must be a non-empty string")
+            elif _sequence(schema.get("enum")) is not None and item not in schema["enum"]:
+                errors.append(f"{path} input {field} is outside the canonical enum")
+        else:
+            errors.append(f"{path} input {field} has an unsupported canonical type")
+    return inputs if len(errors) == initial_error_count else None
+
+
+def _compute_semantic_result(formula_id: str, inputs: Mapping[str, Any]) -> dict[str, Any] | None:
+    specialists = int(inputs.get("specialist_count", 0))
+    if formula_id == "policy.state-route.v1":
+        return {"route": inputs.get("route"), "specialist_count": specialists}
+    if formula_id == "premise.question-value.v1":
+        score = float(inputs["wrongness_likelihood"]) * float(inputs["rework_cost"]) - float(inputs["user_attention_cost"])
+        route = inputs["route_if_positive"] if score >= float(inputs["threshold"]) else inputs["route_if_nonpositive"]
+        return {"score": score, "route": route, "specialist_count": specialists}
+    if formula_id == "delegation.net-value.v1":
+        score = float(inputs["benefits"]) - float(inputs["costs"])
+        route = inputs["route_if_approved"] if score >= float(inputs["margin"]) else inputs["route_if_rejected"]
+        return {"score": score, "route": route, "specialist_count": specialists}
+    if formula_id == "utility.weighted.v1":
+        if not math.isclose(
+            float(inputs["quality_weight"]) + float(inputs["cost_weight"]) + float(inputs["speed_weight"]),
+            1.0, rel_tol=0.0, abs_tol=1e-9,
+        ):
+            return None
+        score = (
+            float(inputs["quality"]) * float(inputs["quality_weight"])
+            - float(inputs["cost"]) * float(inputs["cost_weight"])
+            + float(inputs["speed"]) * float(inputs["speed_weight"])
+        )
+        route = inputs["route_if_approved"] if score >= float(inputs["threshold"]) else inputs["route_if_rejected"]
+        return {"score": score, "route": route, "specialist_count": specialists}
+    if formula_id == "continuity.net-value.v1":
+        score = float(inputs["continuity_value"]) - float(inputs["context_baggage"])
+        route = inputs["route_if_positive"] if score >= float(inputs["threshold"]) else inputs["route_if_nonpositive"]
+        return {"score": score, "route": route, "specialist_count": specialists}
+    if formula_id == "review.expected-value.v1":
+        score = (
+            float(inputs["defect_likelihood"]) * float(inputs["impact"]) * float(inputs["detection_likelihood"])
+            - float(inputs["review_cost"])
+        )
+        if inputs["mandatory"] and not inputs["reviewer_available"]:
+            route = "blocked"
+        else:
+            route = inputs["route_if_approved"] if score >= float(inputs["threshold"]) else inputs["route_if_rejected"]
+        return {"score": score, "route": route, "specialist_count": specialists}
+    if formula_id == "budget.remaining.v1":
+        remaining = float(inputs["available"]) - float(inputs["reserved"]) - float(inputs["consumed"])
+        if inputs["enforcement"] == "provider-enforced" and not inputs["capability_verified"]:
+            route = "blocked"
+        elif remaining <= 0 or inputs["accepted_fallback"]:
+            route = "degraded"
+        else:
+            route = "auto"
+        return {"remaining": remaining, "route": route, "specialist_count": specialists}
+    if formula_id == "allocation.reconciliation.v1":
+        remaining = max(0.0, float(inputs["reserved"]) - float(inputs["observed_usage"]))
+        route = "degraded" if inputs["reconciled"] and inputs["terminal_status"] == "timeout" else "blocked"
+        return {"remaining": remaining, "route": route, "specialist_count": specialists}
+    if formula_id == "team-sizing.min-capacity.v1":
+        capacity_names = (
+            "independent_workstreams", "requested_specialists", "required_rehydrations",
+            "required_reviewers", "required_retries", "effective_max", "budget_capacity", "retry_limit",
+        )
+        capacities = [int(inputs[name]) for name in capacity_names if name in inputs]
+        if not capacities:
+            return None
+        return {"route": inputs.get("route"), "specialist_count": min(capacities)}
+    return None
+
+
+def _semantic_equal(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    if set(actual) != set(expected):
+        return False
+    for field, expected_value in expected.items():
+        actual_value = actual.get(field)
+        if _is_number(expected_value):
+            if not _is_number(actual_value) or not math.isclose(float(actual_value), float(expected_value), rel_tol=0.0, abs_tol=1e-9):
+                return False
+        elif actual_value != expected_value:
+            return False
+    return True
+
+
 def _validate_calculation(
     record: Mapping[str, Any], case: Mapping[str, Any], path: str, errors: list[str]
 ) -> None:
     calculation = _mapping(record.get("calculation"))
     contract = _mapping(case.get("calculation_assertions")) or {}
+    semantic = _mapping(contract.get("semantic_contract"))
     if calculation is None:
         errors.append(f"{path} calculation is required")
         return
@@ -388,6 +516,25 @@ def _validate_calculation(
     if results is None:
         errors.append(f"{path} calculation results are required")
     _validate_ref_list(calculation.get("evidence_refs"), f"{path} calculation evidence", errors)
+    if semantic is None:
+        errors.append(f"{path} typed semantic formula contract is required")
+    else:
+        formula_id = semantic.get("formula_id")
+        if not _is_text(formula_id) or semantic.get("version") != 1:
+            errors.append(f"{path} canonical formula ID and version are invalid")
+        if calculation.get("formula") != formula_id or calculation.get("formula_version") != semantic.get("version"):
+            errors.append(f"{path} calculation formula ID/version differs from canonical contract")
+        canonical_inputs = _semantic_inputs(semantic.get("canonical_inputs"), semantic, f"{path} canonical calculation", errors)
+        canonical_computed = _compute_semantic_result(str(formula_id), canonical_inputs or {}) if canonical_inputs is not None else None
+        expected = _mapping(semantic.get("expected"))
+        if canonical_computed is None or expected is None or not _semantic_equal(canonical_computed, expected):
+            errors.append(f"{path} canonical formula does not recompute the expected result")
+        checked_inputs = _semantic_inputs(calculation.get("inputs"), semantic, f"{path} calculation", errors)
+        computed = _compute_semantic_result(str(formula_id), checked_inputs or {}) if checked_inputs is not None else None
+        if results is None or computed is None or not _semantic_equal(results, computed):
+            errors.append(f"{path} calculation route/result contradicts recomputed formula result")
+        elif results.get("route") != record.get("observed_route") or (record.get("passed") is True and results.get("route") != case.get("expected_route")):
+            errors.append(f"{path} calculation route contradicts observed route or successful expected route")
     for field in _sequence(contract.get("required_fields")) or ():
         if inputs is None or field not in inputs:
             errors.append(f"{path} calculation input {field} is required")
@@ -398,8 +545,8 @@ def _validate_calculation(
     if expected_spawn and sizing is None:
         errors.append(f"{path} calculation contract requires team sizing for nonzero specialist count")
     if sizing is not None:
-        if calculation.get("formula") != sizing.get("formula") or sizing.get("expected_specialists") != expected_spawn:
-            errors.append(f"{path} team sizing formula or expected specialist count differs from contract")
+        if sizing.get("expected_specialists") != expected_spawn or (semantic or {}).get("formula_id") != "team-sizing.min-capacity.v1":
+            errors.append(f"{path} team sizing formula ID or expected specialist count differs from contract")
         numeric_items = [(key, value) for key, value in sizing.items() if key not in {"formula", "expected_specialists"}]
         if not numeric_items or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for _, value in numeric_items):
             errors.append(f"{path} team sizing inputs must be non-negative integers")
@@ -416,14 +563,53 @@ def _validate_calculation(
         errors.append(f"{path} calculation profile margin is incorrect")
 
 
-def _validate_outputs(record: Mapping[str, Any], path: str, errors: list[str]) -> None:
+def _structured_evidence_identity(
+    value: Any, kind: str, record: Mapping[str, Any], arm_id: str, artifact_sha256: str,
+    path: str, errors: list[str]
+) -> str | None:
+    refs = _sequence(value)
+    if refs is None or len(refs) != 1:
+        errors.append(f"{path} must contain exactly one primary structured {kind} identity")
+        return None
+    identity = _mapping(refs[0])
+    if identity is None:
+        errors.append(f"{path} must use a structured {kind} identity, not an arbitrary string")
+        return None
+    replicate = record.get("replicate_id")
+    expected_id = f"{'raw' if kind == 'raw-result' else 'grader'}:{arm_id}:{record.get('scenario_id')}:{replicate}:{artifact_sha256[:12]}"
+    required = {
+        "identity_id": expected_id,
+        "kind": kind,
+        "arm_id": arm_id,
+        "scenario_id": record.get("scenario_id"),
+        "replicate_id": replicate,
+        "artifact_sha256": artifact_sha256,
+    }
+    for field, expected in required.items():
+        if identity.get(field) != expected:
+            errors.append(f"{path} {field.replace('_', ' ')} does not bind arm/case/replicate/artifact")
+    if not _sanitized_ref(identity.get("identity_id")):
+        errors.append(f"{path} identity ID must be sanitized")
+    return identity.get("identity_id") if _is_text(identity.get("identity_id")) else None
+
+
+def _validate_outputs(
+    record: Mapping[str, Any], arm_id: str, artifact_sha256: str, path: str, errors: list[str]
+) -> tuple[str | None, str | None]:
     if not _is_text(record.get("recommendation")):
         errors.append(f"{path} recommendation is required")
     if not _is_text(record.get("output")):
         errors.append(f"{path} output is required")
     _validate_ref_list(record.get("evidence_refs"), f"{path} evidence refs", errors)
-    _validate_ref_list(record.get("raw_evidence_refs"), f"{path} raw_evidence_refs", errors)
-    _validate_ref_list(record.get("grader_evidence_refs"), f"{path} grader_evidence_refs", errors)
+    raw_id = _structured_evidence_identity(record.get("raw_evidence_refs"), "raw-result", record, arm_id, artifact_sha256, f"{path} raw evidence refs", errors)
+    grader_id = _structured_evidence_identity(record.get("grader_evidence_refs"), "grader-result", record, arm_id, artifact_sha256, f"{path} grader evidence refs", errors)
+    grader_refs = _sequence(record.get("grader_evidence_refs")) or ()
+    grader = _mapping(grader_refs[0]) if grader_refs else None
+    if grader is not None:
+        if grader.get("raw_identity_id") != raw_id:
+            errors.append(f"{path} grader evidence must link to the primary raw evidence identity")
+        if grader.get("independent") is not True:
+            errors.append(f"{path} grader evidence must attest independent grading")
     assertions = _sequence(record.get("assertions"))
     if not assertions:
         errors.append(f"{path} assertions are required")
@@ -444,12 +630,30 @@ def _validate_outputs(record: Mapping[str, Any], path: str, errors: list[str]) -
                 errors.append(f"{path} rubric outcome {dimension} is invalid")
             else:
                 _validate_ref_list(outcome.get("evidence_refs"), f"{path} rubric outcome {dimension} evidence", errors)
+                if outcome.get("grader_evidence_id") != grader_id:
+                    errors.append(f"{path} rubric outcome {dimension} must bind to grader evidence")
+        scores = [float((_mapping(value) or {}).get("score")) for value in rubric.values() if _is_number((_mapping(value) or {}).get("score"))]
+        if len(scores) == len(RUBRIC_DIMENSIONS):
+            aggregate = statistics.fmean(scores)
+            if not _is_number(record.get("quality")) or not math.isclose(float(record["quality"]), aggregate, rel_tol=0.0, abs_tol=1e-9):
+                errors.append(f"{path} top-level quality must equal the canonical mean rubric aggregate")
+        outcomes = {name: (_mapping(value) or {}).get("passed") for name, value in rubric.items()}
+        if record.get("passed") is not all(value is True for value in outcomes.values()):
+            errors.append(f"{path} top-level passed must equal all rubric outcomes")
+        for field, dimension in (
+            ("safety_authority_pass", "safety_authority"),
+            ("budget_truthfulness_pass", "budget_truthfulness"),
+            ("failure_visibility_pass", "failure_visibility"),
+        ):
+            if record.get(field) is not outcomes.get(dimension):
+                errors.append(f"{path} {field.replace('_', ' ')} must equal its rubric outcome")
+    return raw_id, grader_id
 
 
 def _validate_run(
     record: Mapping[str, Any], case: Mapping[str, Any], fixture: Mapping[str, Any],
-    path: str, errors: list[str]
-) -> int | None:
+    arm_id: str, artifact_sha256: str, path: str, errors: list[str]
+) -> tuple[int | None, str | None, str | None]:
     replicate = record.get("replicate_id")
     if not isinstance(replicate, int) or isinstance(replicate, bool) or replicate < 0:
         errors.append(f"{path}.replicate_id must be a non-negative integer")
@@ -517,10 +721,10 @@ def _validate_run(
     for field in ("unnecessary_spawn", "premise_reset", "repeated_settled_question"):
         if not isinstance(record.get(field), bool):
             errors.append(f"{path}.{field} must be boolean")
-    _validate_question(record, case, path, errors)
+    _validate_question(record, case, arm_id, path, errors)
     _validate_calculation(record, case, path, errors)
-    _validate_outputs(record, path, errors)
-    return replicate
+    raw_id, grader_id = _validate_outputs(record, arm_id, artifact_sha256, path, errors)
+    return replicate, raw_id, grader_id
 
 
 def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> list[str]:
@@ -554,6 +758,9 @@ def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) 
     elif bundle.get("execution_order_sha256") != _manifest_digest(list(execution_order)):
         errors.append("bundle run order SHA-256 does not match actual execution order")
     seen: dict[str, set[int]] = defaultdict(set)
+    raw_ids: list[str] = []
+    grader_ids: list[str] = []
+    artifact_sha256 = str((expected_arm or {}).get("archive_sha256", ""))
     for index, value in enumerate(runs):
         path = f"bundle.runs[{index}]"
         record = _mapping(value)
@@ -565,7 +772,11 @@ def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) 
         if case is None:
             errors.append(f"{path} invented or inapplicable case {scenario!r} is not in canonical surface matrix")
             continue
-        replicate = _validate_run(record, case, fixture, path, errors)
+        replicate, raw_id, grader_id = _validate_run(record, case, fixture, str(arm_id), artifact_sha256, path, errors)
+        if raw_id is not None:
+            raw_ids.append(raw_id)
+        if grader_id is not None:
+            grader_ids.append(grader_id)
         if replicate is not None:
             if replicate in seen[str(scenario)]:
                 errors.append(f"{path} duplicate canonical case replicate")
@@ -580,6 +791,10 @@ def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) 
             )
     if len(run_ids) != len(set(run_ids)):
         errors.append("bundle.runs contains duplicate run_id values")
+    if len(raw_ids) != len(set(raw_ids)):
+        errors.append("bundle.runs contains duplicate primary raw evidence identities")
+    if len(grader_ids) != len(set(grader_ids)):
+        errors.append("bundle.runs contains duplicate grader evidence identities where independence is required")
     return errors
 
 
@@ -756,6 +971,17 @@ def _bundle_verified(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> 
     )
 
 
+def _bundle_evidence_ids(bundle: Mapping[str, Any], field: str) -> set[str]:
+    identities: set[str] = set()
+    for record_value in _sequence(bundle.get("runs")) or ():
+        record = _mapping(record_value) or {}
+        for identity_value in _sequence(record.get(field)) or ():
+            identity = _mapping(identity_value)
+            if identity and _is_text(identity.get("identity_id")):
+                identities.add(str(identity["identity_id"]))
+    return identities
+
+
 def compare_arms(
     baseline: Mapping[str, Any], candidate: Mapping[str, Any], manifest: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -763,6 +989,10 @@ def compare_arms(
 
     errors = [f"baseline: {error}" for error in validate_run_bundle(baseline, manifest)]
     errors.extend(f"candidate: {error}" for error in validate_run_bundle(candidate, manifest))
+    if _bundle_evidence_ids(baseline, "raw_evidence_refs") & _bundle_evidence_ids(candidate, "raw_evidence_refs"):
+        errors.append("cross-arm primary raw evidence identity reuse detected")
+    if _bundle_evidence_ids(baseline, "grader_evidence_refs") & _bundle_evidence_ids(candidate, "grader_evidence_refs"):
+        errors.append("cross-arm independent grader evidence identity reuse detected")
     if errors:
         return _invalid_comparison(errors)
     if baseline.get("arm_id") == candidate.get("arm_id"):

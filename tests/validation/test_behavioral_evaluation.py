@@ -103,12 +103,14 @@ def _canonical_run(case: dict, arm_id: str, replicate: int) -> dict:
     expected_spawns = case["expected_spawn_count"]
     question = case["question_contract"]
     calculation_contract = case["calculation_assertions"]
+    semantic_contract = calculation_contract["semantic_contract"]
     profile = case["config"].get("profile", "balanced")
     margins = {"economy": 3, "balanced": 1, "quality": 1}
-    calculation_inputs = {field: 1 for field in calculation_contract.get("required_fields", [])}
-    if "team_sizing" in calculation_contract:
-        calculation_inputs.update({key: value for key, value in calculation_contract["team_sizing"].items() if key not in {"formula", "expected_specialists"}})
+    calculation_inputs = deepcopy(semantic_contract["canonical_inputs"])
     evidence_refs = [f"evidence:{case['id']}:{item}" for item in case["evidence_requirement"]]
+    artifact_sha256 = subject(arm_id)["archive_sha256"]
+    raw_id = f"raw:{arm_id}:{case['id']}:{replicate}:{artifact_sha256[:12]}"
+    grader_id = f"grader:{arm_id}:{case['id']}:{replicate}:{artifact_sha256[:12]}"
     return {
         "run_id": f"{arm_id}:{case['id']}:{replicate}",
         "replicate_id": replicate,
@@ -145,9 +147,18 @@ def _canonical_run(case: dict, arm_id: str, replicate: int) -> dict:
         "question_result": {
             "asked_count": expected_questions,
             "decision_id": question["decision_id"] if question else None,
-            "recommendation": f"recommendation for {case['id']}" if question else None,
-            "impact": f"impact for {case['id']}" if question else None,
-            "next_step": f"next step for {case['id']}" if question else None,
+            "bundle": question["bundle"] if question else None,
+            "recommendation": question["recommendation"] if question else None,
+            "impact": question["impact"] if question else None,
+            "next_step": question["next_step"] if question else None,
+            "actual_question": {
+                "evidence_ref": f"question:{arm_id}:{case['id']}:{replicate}",
+                "decision_id": question["decision_id"],
+                "bundle": question["bundle"],
+                "recommendation": question["recommendation"],
+                "impact": question["impact"],
+                "next_step": question["next_step"],
+            } if question else None,
             "suppression": {
                 "applied": "suppression" in case["id"],
                 "reason": "settled decision retained" if "suppression" in case["id"] else "not applicable",
@@ -158,9 +169,10 @@ def _canonical_run(case: dict, arm_id: str, replicate: int) -> dict:
         "output": f"observed route: {case['expected_route']}",
         "calculation_contract": deepcopy(calculation_contract),
         "calculation": {
-            "formula": calculation_contract.get("team_sizing", {}).get("formula", f"{case['category']}-policy-formula"),
+            "formula": semantic_contract["formula_id"],
+            "formula_version": semantic_contract["version"],
             "inputs": calculation_inputs,
-            "results": {"route": case["expected_route"], "specialist_count": expected_spawns},
+            "results": deepcopy(semantic_contract["expected"]),
             "profile": profile,
             "profile_margin": case["config"].get("delegation_margin", margins.get(profile)),
             "provenance": calculation_contract.get("provenance", "observed"),
@@ -168,9 +180,9 @@ def _canonical_run(case: dict, arm_id: str, replicate: int) -> dict:
         },
         "assertions": [{"id": f"assertion:{case['id']}", "provenance": calculation_contract.get("provenance", "observed"), "evidence_refs": evidence_refs}],
         "rubric_contract": deepcopy(case["rubric"]),
-        "rubric_outcome": {dimension: {"score": 3.0, "passed": True, "evidence_refs": evidence_refs} for dimension in case["rubric"]},
-        "raw_evidence_refs": [f"result:{arm_id}:{case['id']}:{replicate}"],
-        "grader_evidence_refs": [f"grader:{arm_id}:{case['id']}:{replicate}"],
+        "rubric_outcome": {dimension: {"score": 3.0, "passed": True, "evidence_refs": evidence_refs, "grader_evidence_id": grader_id} for dimension in case["rubric"]},
+        "raw_evidence_refs": [{"identity_id": raw_id, "kind": "raw-result", "arm_id": arm_id, "scenario_id": case["id"], "replicate_id": replicate, "artifact_sha256": artifact_sha256}],
+        "grader_evidence_refs": [{"identity_id": grader_id, "kind": "grader-result", "arm_id": arm_id, "scenario_id": case["id"], "replicate_id": replicate, "artifact_sha256": artifact_sha256, "raw_identity_id": raw_id, "independent": True}],
     }
 
 
@@ -246,6 +258,12 @@ def mutate_runs(value: dict, predicate, mutate) -> dict:
     return value
 
 
+def set_run_quality(record: dict, quality: float) -> None:
+    record["quality"] = quality
+    for outcome in record["rubric_outcome"].values():
+        outcome["score"] = quality
+
+
 class EvaluationArtifactTests(unittest.TestCase):
     def test_task_seven_artifacts_exist_and_parse(self):
         for relative in (
@@ -291,6 +309,25 @@ class EvaluationArtifactTests(unittest.TestCase):
                 )
             else:
                 self.assertIsNone(case["question_contract"])
+
+    def test_every_case_has_a_typed_versioned_semantic_calculation_contract(self):
+        for case in acceptance()["cases"]:
+            with self.subTest(case=case["id"]):
+                contract = case["calculation_assertions"].get("semantic_contract")
+                self.assertIsInstance(contract, dict)
+                self.assertRegex(contract["formula_id"], r"^[a-z][a-z0-9.-]+\.v1$")
+                self.assertEqual(contract["version"], 1)
+                self.assertIsInstance(contract["inputs"], dict)
+                self.assertIsInstance(contract["expected"], dict)
+
+    def test_question_bundle_canonical_filename_uses_exact_git_case(self):
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        exact = "skills/optimal-challenge/templates/QUESTION-BUNDLE.md"
+        self.assertIn(exact, tracked)
+        self.assertNotIn("skills/optimal-challenge/templates/question-bundle.md", tracked)
+        self.assertEqual(EVALUATOR.CANONICAL_FILES[("prompt_hashes", "question_bundle")].relative_to(ROOT).as_posix(), exact)
 
     def test_manifest_pins_four_arms_identity_and_exact_research_margins(self):
         stored = json.loads((ROOT / "tests/evaluation-manifest.json").read_text(encoding="utf-8"))
@@ -414,6 +451,9 @@ class BundleValidationTests(unittest.TestCase):
         candidate = bundle()
         candidate["runs"][0]["observed_route"] = "delegate"
         candidate["runs"][0]["passed"] = False
+        candidate["runs"][0]["rubric_outcome"]["quality"]["passed"] = False
+        candidate["runs"][0]["calculation"]["inputs"]["route"] = "delegate"
+        candidate["runs"][0]["calculation"]["results"]["route"] = "delegate"
         self.assertEqual(self.evaluator.validate_run_bundle(candidate, self.manifest), [])
 
 
@@ -462,7 +502,7 @@ class ReviewerRegressionTests(unittest.TestCase):
                 self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
 
     def test_nested_calculation_rubric_measurement_and_claim_policy_fields_fail(self):
-        for field in ("formula", "inputs", "results", "profile", "profile_margin", "provenance", "evidence_refs"):
+        for field in ("formula", "formula_version", "inputs", "results", "profile", "profile_margin", "provenance", "evidence_refs"):
             with self.subTest(calculation_field=field):
                 candidate = bundle()
                 candidate["runs"][0]["calculation"].pop(field)
@@ -477,9 +517,102 @@ class ReviewerRegressionTests(unittest.TestCase):
         altered_manifest["claim_policy"]["proxy_only_cannot_support_cost_claim"] = False
         self.assertIn("claim_policy", " ".join(self.evaluator.validate_run_bundle(bundle(), altered_manifest)).lower())
 
+    def test_formula_inputs_results_and_route_are_recomputed_per_family(self):
+        candidate = bundle()
+        families = {}
+        for index, item in enumerate(candidate["runs"]):
+            formula_id = item["calculation_contract"].get("semantic_contract", {}).get("formula_id")
+            if formula_id and formula_id not in families:
+                families[formula_id] = index
+        self.assertTrue(
+            {
+                "policy.state-route.v1",
+                "premise.question-value.v1",
+                "delegation.net-value.v1",
+                "review.expected-value.v1",
+                "utility.weighted.v1",
+                "budget.remaining.v1",
+                "allocation.reconciliation.v1",
+                "continuity.net-value.v1",
+                "team-sizing.min-capacity.v1",
+            }
+            <= set(families)
+        )
+        for formula_id, index in families.items():
+            with self.subTest(formula=formula_id):
+                altered = bundle()
+                altered["runs"][index]["calculation"]["formula"] = "1+1=999"
+                self.assertIn("formula", " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+                altered = bundle()
+                schema = altered["runs"][index]["calculation_contract"]["semantic_contract"]["inputs"]
+                input_name, input_contract = next(iter(schema.items()))
+                altered["runs"][index]["calculation"]["inputs"][input_name] = {
+                    "number": -999,
+                    "integer": 1.5,
+                    "boolean": "not-a-boolean",
+                    "string": "",
+                }[input_contract["type"]]
+                self.assertIn("input", " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+                altered = bundle()
+                altered["runs"][index]["calculation"]["results"]["route"] = "contradiction"
+                self.assertIn("route", " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+
+    def test_rubric_aggregation_and_top_level_flags_are_bound(self):
+        candidate = bundle()
+        for outcome in candidate["runs"][0]["rubric_outcome"].values():
+            outcome["score"] = 0
+            outcome["passed"] = False
+        candidate["runs"][0]["quality"] = 4
+        errors = " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower()
+        self.assertIn("aggregate", errors)
+        self.assertIn("passed", errors)
+        for field, dimension in (
+            ("safety_authority_pass", "safety_authority"),
+            ("budget_truthfulness_pass", "budget_truthfulness"),
+            ("failure_visibility_pass", "failure_visibility"),
+        ):
+            with self.subTest(field=field):
+                altered = bundle()
+                altered["runs"][0]["rubric_outcome"][dimension]["passed"] = False
+                self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+
+    def test_structured_raw_and_grader_identities_bind_and_cannot_be_reused(self):
+        candidate = bundle()
+        self.assertIsInstance(candidate["runs"][0]["raw_evidence_refs"][0], dict)
+        self.assertIsInstance(candidate["runs"][0]["grader_evidence_refs"][0], dict)
+        candidate["runs"][1]["raw_evidence_refs"] = deepcopy(candidate["runs"][0]["raw_evidence_refs"])
+        candidate["runs"][1]["grader_evidence_refs"] = deepcopy(candidate["runs"][0]["grader_evidence_refs"])
+        errors = " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower()
+        self.assertIn("raw", errors)
+        self.assertIn("grader", errors)
+        baseline = bundle("A")
+        candidate = bundle("D")
+        candidate["runs"][0]["raw_evidence_refs"] = deepcopy(baseline["runs"][0]["raw_evidence_refs"])
+        candidate["runs"][0]["grader_evidence_refs"] = deepcopy(baseline["runs"][0]["grader_evidence_refs"])
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+        self.assertIn("raw evidence", " ".join(result["errors"]).lower())
+        self.assertIn("grader evidence", " ".join(result["errors"]).lower())
+
+    def test_question_bundle_and_actual_question_reference_are_bound(self):
+        asked = next(i for i, item in enumerate(bundle()["runs"]) if item["expected_question_count"] == 1)
+        candidate = bundle()
+        self.assertIn("bundle", candidate["runs"][asked]["question_result"])
+        self.assertIsInstance(candidate["runs"][asked]["question_result"]["actual_question"], dict)
+        for field in ("bundle", "decision_id", "recommendation", "impact", "next_step"):
+            with self.subTest(field=field):
+                altered = bundle()
+                altered["runs"][asked]["question_result"]["actual_question"].pop(field)
+                self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+                altered = bundle()
+                altered["runs"][asked]["question_result"]["actual_question"][field] = "mismatch"
+                self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+        altered = bundle()
+        altered["runs"][asked]["question_result"]["actual_question"]["evidence_ref"] = "question:wrong-arm:wrong-case:999"
+        self.assertIn("actual question reference", " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+
     def test_each_material_question_field_and_suppression_evidence_are_required(self):
         asked_index = next(i for i, item in enumerate(bundle()["runs"]) if item["expected_question_count"] == 1)
-        for field in ("decision_id", "recommendation", "impact", "next_step"):
+        for field in ("decision_id", "bundle", "recommendation", "impact", "next_step"):
             with self.subTest(field=field):
                 candidate = bundle()
                 candidate["runs"][asked_index]["question_result"].pop(field)
@@ -581,7 +714,7 @@ class StatisticsAndComparisonTests(unittest.TestCase):
         candidate = mutate_runs(
             bundle("D"),
             lambda item: "high-value-delegation" in item["evaluation_groups"],
-            lambda item: (item.__setitem__("quality", 3.2), item["critical_path"].__setitem__("value", 9.0)),
+            lambda item: (set_run_quality(item, 3.2), item["critical_path"].__setitem__("value", 9.0)),
         )
         result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
         self.assertEqual(result["status"], "unverified")
@@ -591,7 +724,7 @@ class StatisticsAndComparisonTests(unittest.TestCase):
 
     def test_quality_regression_beyond_point_ten_fails(self):
         baseline = bundle("A")
-        candidate = mutate_runs(bundle("D"), lambda item: True, lambda item: item.__setitem__("quality", 2.89))
+        candidate = mutate_runs(bundle("D"), lambda item: True, lambda item: set_run_quality(item, 2.89))
         result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
         self.assertEqual(result["status"], "unverified")
         self.assertEqual(result["quality_noninferiority"]["status"], "fail")
@@ -611,8 +744,8 @@ class StatisticsAndComparisonTests(unittest.TestCase):
     def test_high_value_gain_requires_point_two_quality_or_ten_percent_critical_path(self):
         is_high_value = lambda item: "high-value-delegation" in item["evaluation_groups"]
         baseline = bundle("A")
-        weak = mutate_runs(bundle("D"), is_high_value, lambda item: (item.__setitem__("quality", 3.19), item["critical_path"].__setitem__("value", 9.01)))
-        strong_quality = mutate_runs(bundle("D"), is_high_value, lambda item: item.__setitem__("quality", 3.2))
+        weak = mutate_runs(bundle("D"), is_high_value, lambda item: (set_run_quality(item, 3.19), item["critical_path"].__setitem__("value", 9.01)))
+        strong_quality = mutate_runs(bundle("D"), is_high_value, lambda item: set_run_quality(item, 3.2))
         strong_time = mutate_runs(bundle("D"), is_high_value, lambda item: item["critical_path"].__setitem__("value", 9.0))
         weak_result = self.evaluator.compare_arms(baseline, weak, self.manifest)
         self.assertEqual(weak_result["high_value_delegation"]["status"], "fail")
@@ -654,8 +787,8 @@ class StatisticsAndComparisonTests(unittest.TestCase):
         base_values = [1, 4, 1, 4, 2]
         candidate_values = [4, 1, 4, 1, 3]
         for index, (base_item, candidate_item) in enumerate(zip(baseline["runs"], candidate["runs"])):
-            base_item["quality"] = base_values[index % 5]
-            candidate_item["quality"] = candidate_values[index % 5]
+            set_run_quality(base_item, base_values[index % 5])
+            set_run_quality(candidate_item, candidate_values[index % 5])
         result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
         self.assertEqual(result["status"], "unverified")
         self.assertEqual(result["quality_noninferiority"]["status"], "inconclusive")
