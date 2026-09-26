@@ -70,7 +70,7 @@ class SchemaTests(unittest.TestCase):
         ]
         errors = "\n".join(validate_orchestration_state(registry, ledger))
         self.assertIn("more than one reservation", errors)
-        self.assertIn("nondecreasing", errors)
+        self.assertIn("strictly increasing", errors)
     def test_bidirectional_registry_ledger_links_states_membership_and_evidence_are_checked(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
         registry["evidence"]["wrong-key"] = {"evidence_id": "different-id", "kind": "source", "outcome": "verified"}
@@ -137,6 +137,14 @@ class SchemaTests(unittest.TestCase):
         ledger["reservations"]["   "] = ledger["reservations"].pop("reservation-1")
         self.assertTrue(list(Draft202012Validator(registry_schema).iter_errors(registry)))
         self.assertTrue(list(Draft202012Validator(ledger_schema).iter_errors(ledger)))
+    def test_normal_transaction_history_versions_must_be_strictly_increasing(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        ledger["history"] = [
+            {"event_id": "one", "type": "start", "transaction_id": "tx-a", "transaction_version": 1, "event_hash": "1" * 64},
+            {"event_id": "two", "type": "complete", "transaction_id": "tx-b", "transaction_version": 1, "event_hash": "2" * 64},
+        ]
+        ledger["applied_event_ids"] = ["one", "two"]
+        self.assertIn("history: transaction versions must be strictly increasing", "\n".join(validate_orchestration_state(registry, ledger)))
     def test_balance_and_registry_reservation_invariants_are_checked(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
         ledger["available"] = 61
@@ -290,6 +298,11 @@ class LedgerMutationTests(unittest.TestCase):
                     apply_ledger_event(ledger, event("failed", 41, reservation_id="r", amount=usage, confirmed_remainder=remainder, terminal_evidence="failed"))
         settled = apply_ledger_event(ledger, event("failed", 42, reservation_id="r", amount=5, confirmed_remainder=15, terminal_evidence="failed"))
         self.assertEqual(15, settled["released"])
+        large = self.empty_ledger()
+        large.update({"ceiling": 1_000_000_000_000, "available": 1_000_000_000_000})
+        large = apply_ledger_event(large, event("start", 43, reservation_id="large", assignment_id="large-a", amount=1_000_000_000_000))
+        with self.assertRaisesRegex(ValueError, "confirmed_remainder"):
+            apply_ledger_event(large, event("failed", 44, reservation_id="large", amount=1, confirmed_remainder=1_000_000_000_000, terminal_evidence="failed"))
 
     def test_every_history_version_and_global_event_identity_are_validated(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")

@@ -180,8 +180,10 @@ def _validated_result(ledger: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(record, Mapping):
                 raise ValueError(f"$.ledger.{name}[{index}]: must be an object")
             version = record.get("transaction_version")
-            if isinstance(version, bool) or not isinstance(version, int) or not prior_transaction <= version <= transaction_version:
-                raise ValueError(f"$.ledger.{name}: transaction versions must be nondecreasing and must not exceed current")
+            valid_order = (version > prior_transaction) if name == "history" and isinstance(version, int) and not isinstance(version, bool) else (prior_transaction <= version) if isinstance(version, int) and not isinstance(version, bool) else False
+            if not valid_order or version > transaction_version:
+                order = "strictly increasing" if name == "history" else "nondecreasing"
+                raise ValueError(f"$.ledger.{name}: transaction versions must be {order} and must not exceed current")
             prior_transaction = version
             if name != "history" or "reconciliation_version" in record:
                 recon = record.get("reconciliation_version")
@@ -417,7 +419,7 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             return _validated_result(result)
         remainder = _number(confirmed_remainder, "$.event.confirmed_remainder")
         expected_remainder = max(reservation["active_reserved"] - usage, 0)
-        if not math.isclose(remainder, expected_remainder, abs_tol=1e-9):
+        if not math.isclose(remainder, expected_remainder, rel_tol=0.0, abs_tol=1e-9):
             raise ValueError("$.event.confirmed_remainder: must exactly equal the unused active reservation after evidenced usage")
     state = "cancelled" if target == "cancel" else "failed" if target == "timeout" else target
     other_committed = sum(item["funded_consumed"] + item["active_reserved"] for key, item in reservations.items() if key != reservation_id)
@@ -588,7 +590,11 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
             continue
         mapped = [item for item in records if isinstance(item, Mapping)]
         transaction_versions = [item.get("transaction_version") for item in mapped]
-        if transaction_versions != sorted(transaction_versions, key=lambda value: (-1 if not isinstance(value, int) or isinstance(value, bool) else value)):
+        sorted_versions = sorted(transaction_versions, key=lambda value: (-1 if not isinstance(value, int) or isinstance(value, bool) else value))
+        if path == "history":
+            if transaction_versions != sorted_versions or len(transaction_versions) != len(set(transaction_versions)):
+                errors.append("$.ledger.history: transaction versions must be strictly increasing")
+        elif transaction_versions != sorted_versions:
             errors.append(f"$.ledger.{path}: transaction versions must be nondecreasing")
         if any(not isinstance(version, int) or isinstance(version, bool) or version < 0 or version > current_transaction for version in transaction_versions):
             errors.append(f"$.ledger.{path}: transaction versions must be non-negative and must not exceed the current transaction version")
