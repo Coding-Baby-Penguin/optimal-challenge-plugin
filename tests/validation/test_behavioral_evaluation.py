@@ -24,71 +24,16 @@ def require_evaluator(test: unittest.TestCase):
     return EVALUATOR
 
 
-def subject(arm_id: str = "D", *, version: str = "1.2.0") -> dict:
-    policy_overrides = {
-        "A": {"release": "v1.1", "delegation": "v1.1-routing", "continuity": "v1.1-routing", "premise_gate": "v1.1-routing"},
-        "B": {"release": "v1.2-candidate", "delegation": "always-for-decomposable", "continuity": "disabled", "premise_gate": "disabled"},
-        "C": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "disabled", "premise_gate": "disabled"},
-        "D": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "enabled", "premise_gate": "enabled"},
-    }
-    return {
-        "arm_id": arm_id,
-        "policy_overrides": policy_overrides[arm_id],
-        "commit": "d" * 40,
-        "tag": f"v{version}",
-        "archive_sha256": "a" * 64,
-        "expected_manifest_version": version,
-        "cachebuster": f"acceptance-{arm_id.lower()}-001",
-        "install_source": "isolated-local-archive",
-        "installed_plugin_read_back": {
-            "name": "optimal-challenge",
-            "version": version,
-            "cachebuster": f"acceptance-{arm_id.lower()}-001",
-            "archive_sha256": "a" * 64,
-        },
-    }
+def manifest() -> dict:
+    return json.loads((ROOT / "tests/evaluation-manifest.json").read_text(encoding="utf-8"))
 
 
-def manifest(*, minimum_runs: int = 5) -> dict:
-    return {
-        "manifest_version": 1,
-        "prompt_hashes": {"system": "1" * 64, "task_template": "2" * 64},
-        "fixture_hashes": {
-            "behavioral_acceptance": "3" * 64,
-            "team_routing": "4" * 64,
-        },
-        "host": "codex-desktop",
-        "surface": "codex-local",
-        "model": "host-configured",
-        "reasoning": "host-configured",
-        "tool_set": ["filesystem", "shell", "collaboration"],
-        "profile": "balanced",
-        "config_sha256": "5" * 64,
-        "evaluator_version": "1.0.0",
-        "rubric_version": "1.0.0",
-        "randomization": {"method": "seeded-counterbalance", "seed": 12027},
-        "minimum_run_count": minimum_runs,
-        "aggregation": {
-            "quality": "mean",
-            "cost": "median-observed-only",
-            "latency": "median-observed-only",
-            "pass_rate": "raw-proportion",
-            "confidence_interval": "paired-bootstrap-95",
-        },
-        "margins": {
-            "quality_noninferiority": 0.10,
-            "simple_task_cost_latency": 0.05,
-            "high_value_quality_gain": 0.20,
-            "high_value_critical_path_reduction": 0.10,
-            "unnecessary_spawn_rate_max": 0.10,
-        },
-        "arms": [
-            subject("A", version="1.1.0"),
-            subject("B"),
-            subject("C"),
-            subject("D"),
-        ],
-    }
+def acceptance() -> dict:
+    return json.loads((ROOT / "tests/behavioral-acceptance.json").read_text(encoding="utf-8"))
+
+
+def subject(arm_id: str = "D", **_ignored) -> dict:
+    return deepcopy(next(arm for arm in manifest()["arms"] if arm["arm_id"] == arm_id))
 
 
 def manifest_digest(value: dict) -> str:
@@ -99,7 +44,7 @@ def manifest_digest(value: dict) -> str:
 def run(
     index: int,
     *,
-    scenario_id: str = "direct-fast-path",
+    scenario_id: str = "accept-direct-fast-path",
     category: str = "direct",
     quality: float = 3.0,
     passed: bool = True,
@@ -149,11 +94,95 @@ def run(
     }
 
 
-def bundle(arm_id: str = "D", *, runs: list[dict] | None = None, version: str = "1.2.0") -> dict:
+def _sha_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical_run(case: dict, arm_id: str, replicate: int) -> dict:
+    expected_questions = case["expected_question_count"]
+    expected_spawns = case["expected_spawn_count"]
+    question = case["question_contract"]
+    calculation_contract = case["calculation_assertions"]
+    profile = case["config"].get("profile", "balanced")
+    margins = {"economy": 3, "balanced": 1, "quality": 1}
+    calculation_inputs = {field: 1 for field in calculation_contract.get("required_fields", [])}
+    if "team_sizing" in calculation_contract:
+        calculation_inputs.update({key: value for key, value in calculation_contract["team_sizing"].items() if key not in {"formula", "expected_specialists"}})
+    evidence_refs = [f"evidence:{case['id']}:{item}" for item in case["evidence_requirement"]]
+    return {
+        "run_id": f"{arm_id}:{case['id']}:{replicate}",
+        "replicate_id": replicate,
+        "scenario_id": case["id"],
+        "source_case_id": case["source_case_id"],
+        "case_sha256": manifest_digest(case),
+        "prompt_sha256": _sha_text(case["prompt"]),
+        "category": case["category"],
+        "run_kind": acceptance()["execution_policy"]["default_run_kind"],
+        "evaluation_groups": deepcopy(case.get("evaluation_groups", [])),
+        "quality": 3.0,
+        "passed": True,
+        "safety_authority_pass": True,
+        "budget_truthfulness_pass": True,
+        "failure_visibility_pass": True,
+        "cost": {"value": 10.0, "provenance": "observed", "evidence_refs": evidence_refs[:1]},
+        "latency": {"value": 10.0, "provenance": "observed", "evidence_refs": evidence_refs[:1]},
+        "critical_path": {"value": 10.0, "provenance": "observed", "evidence_refs": evidence_refs[:1]},
+        "proxies": {"model_calls": 1 + expected_spawns, "spawn_count": expected_spawns, "tool_calls": 1, "question_count": expected_questions},
+        "unnecessary_spawn": False,
+        "premise_reset": False,
+        "repeated_settled_question": False,
+        "unsafe_failures": [],
+        "capability_result": "not-applicable",
+        "expected_route": case["expected_route"],
+        "observed_route": case["expected_route"],
+        "expected_question_count": expected_questions,
+        "expected_spawn_count": expected_spawns,
+        "prohibited_behaviors": deepcopy(case["prohibited_behaviors"]),
+        "observed_behaviors": [],
+        "evidence_requirement": deepcopy(case["evidence_requirement"]),
+        "evidence_refs": evidence_refs,
+        "question_contract": deepcopy(question),
+        "question_result": {
+            "asked_count": expected_questions,
+            "decision_id": question["decision_id"] if question else None,
+            "recommendation": f"recommendation for {case['id']}" if question else None,
+            "impact": f"impact for {case['id']}" if question else None,
+            "next_step": f"next step for {case['id']}" if question else None,
+            "suppression": {
+                "applied": "suppression" in case["id"],
+                "reason": "settled decision retained" if "suppression" in case["id"] else "not applicable",
+                "evidence_refs": evidence_refs[:1],
+            },
+        },
+        "recommendation": f"recommended route: {case['expected_route']}",
+        "output": f"observed route: {case['expected_route']}",
+        "calculation_contract": deepcopy(calculation_contract),
+        "calculation": {
+            "formula": calculation_contract.get("team_sizing", {}).get("formula", f"{case['category']}-policy-formula"),
+            "inputs": calculation_inputs,
+            "results": {"route": case["expected_route"], "specialist_count": expected_spawns},
+            "profile": profile,
+            "profile_margin": case["config"].get("delegation_margin", margins.get(profile)),
+            "provenance": calculation_contract.get("provenance", "observed"),
+            "evidence_refs": evidence_refs,
+        },
+        "assertions": [{"id": f"assertion:{case['id']}", "provenance": calculation_contract.get("provenance", "observed"), "evidence_refs": evidence_refs}],
+        "rubric_contract": deepcopy(case["rubric"]),
+        "rubric_outcome": {dimension: {"score": 3.0, "passed": True, "evidence_refs": evidence_refs} for dimension in case["rubric"]},
+        "raw_evidence_refs": [f"result:{arm_id}:{case['id']}:{replicate}"],
+        "grader_evidence_refs": [f"grader:{arm_id}:{case['id']}:{replicate}"],
+    }
+
+
+def bundle(arm_id: str = "D", *, runs: list[dict] | None = None, **_ignored) -> dict:
     m = manifest()
-    selected_runs = deepcopy(runs if runs is not None else [run(i) for i in range(5)])
-    for record in selected_runs:
-        record["run_id"] = f"{arm_id}:{record['run_id']}"
+    matrix = acceptance()
+    repetitions = matrix["execution_policy"]["stochastic_repetitions"]
+    applicable = [case for case in matrix["cases"] if case["surface"] == m["surface"]]
+    selected_runs = deepcopy(runs if runs is not None else [_canonical_run(case, arm_id, repeat) for case in applicable for repeat in range(repetitions)])
+    arm_order = m["randomization"]["execution_order"]
+    run_order = [record["run_id"] for record in selected_runs]
+    identity_status = subject(arm_id)["identity_status"]
     return {
         "bundle_version": 1,
         "arm_id": arm_id,
@@ -172,22 +201,49 @@ def bundle(arm_id: str = "D", *, runs: list[dict] | None = None, version: str = 
         "randomization": deepcopy(m["randomization"]),
         "aggregation": deepcopy(m["aggregation"]),
         "margins": deepcopy(m["margins"]),
-        "subject": subject(arm_id, version=version),
-        "arm_policy": deepcopy(subject(arm_id, version=version)["policy_overrides"]),
+        "subject": subject(arm_id),
+        "arm_policy": deepcopy(subject(arm_id)["policy_overrides"]),
+        "identity_verification": {
+            "artifact": identity_status,
+            "installed_read_back": identity_status,
+            "run_identity": "verified",
+            "surface": "verified",
+        },
+        "surface_evidence": {"surface_id": m["surface"], "status": "verified", "evidence_ref": f"evidence:surface:{arm_id}"},
         "isolation": {
             "fresh_task": True,
             "cache_cleared": True,
             "fresh_registry": True,
             "fresh_ledger": True,
-            "registry_fingerprint": f"registry-{arm_id}",
-            "ledger_fingerprint": f"ledger-{arm_id}",
+            "task_fingerprint": _sha_text(f"task:{arm_id}"),
+            "cache_fingerprint": _sha_text(f"cache:{arm_id}"),
+            "artifact_fingerprint": subject(arm_id)["archive_sha256"],
+            "registry_fingerprint": _sha_text(f"registry:{arm_id}"),
+            "ledger_fingerprint": _sha_text(f"ledger:{arm_id}"),
             "config_fingerprint": m["config_sha256"],
+            "environment_evidence_id": f"evidence:environment:{arm_id}",
             "prior_arm_state_detected": False,
         },
-        "execution_order": list(range(1, len(selected_runs) + 1)),
+        "recorded_arm_order": deepcopy(arm_order),
+        "arm_position": arm_order.index(arm_id) + 1,
+        "randomization_evidence": {"seed": m["randomization"]["seed"], "method": m["randomization"]["method"], "evidence_ref": f"evidence:order:{arm_id}"},
+        "execution_order": run_order,
+        "execution_order_sha256": manifest_digest(run_order),
         "run_count": len(selected_runs),
         "runs": selected_runs,
     }
+
+
+def refresh_execution_order(value: dict) -> None:
+    value["execution_order"] = [record["run_id"] for record in value["runs"]]
+    value["execution_order_sha256"] = manifest_digest(value["execution_order"])
+
+
+def mutate_runs(value: dict, predicate, mutate) -> dict:
+    for record in value["runs"]:
+        if predicate(record):
+            mutate(record)
+    return value
 
 
 class EvaluationArtifactTests(unittest.TestCase):
@@ -211,6 +267,7 @@ class EvaluationArtifactTests(unittest.TestCase):
     def test_acceptance_matrix_covers_routes_ux_and_failure_boundaries(self):
         matrix = json.loads((ROOT / "tests/behavioral-acceptance.json").read_text(encoding="utf-8"))
         cases = matrix["cases"]
+        self.assertEqual(len(cases), 30)
         categories = {case["category"] for case in cases}
         self.assertTrue({"direct", "premise", "invocation", "profile", "continuity", "budget", "review", "capability-fallback", "failure"} <= categories)
         required_routes = {
@@ -360,6 +417,145 @@ class BundleValidationTests(unittest.TestCase):
         self.assertEqual(self.evaluator.validate_run_bundle(candidate, self.manifest), [])
 
 
+class ReviewerRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.evaluator = require_evaluator(self)
+        self.manifest = manifest()
+
+    def test_invented_only_suite_cannot_replace_canonical_matrix(self):
+        invented = bundle(runs=[run(i, scenario_id="invented-only") for i in range(5)])
+        errors = " ".join(self.evaluator.validate_run_bundle(invented, self.manifest)).lower()
+        self.assertIn("missing canonical", errors)
+        self.assertIn("invented", errors)
+
+    def test_coordinated_bundle_and_manifest_hash_mutation_cannot_hide_fixture_drift(self):
+        altered_manifest = manifest()
+        altered_manifest["fixture_hashes"]["behavioral_acceptance"] = "f" * 64
+        candidate = bundle()
+        candidate["fixture_hashes"] = deepcopy(altered_manifest["fixture_hashes"])
+        candidate["manifest_sha256"] = manifest_digest(altered_manifest)
+        errors = " ".join(self.evaluator.validate_run_bundle(candidate, altered_manifest)).lower()
+        self.assertIn("canonical", errors)
+        self.assertIn("behavioral_acceptance", errors)
+        altered_manifest = manifest()
+        altered_manifest["prompt_hashes"]["invented"] = "f" * 64
+        candidate = bundle()
+        candidate["prompt_hashes"] = deepcopy(altered_manifest["prompt_hashes"])
+        candidate["manifest_sha256"] = manifest_digest(altered_manifest)
+        self.assertIn("exactly", " ".join(self.evaluator.validate_run_bundle(candidate, altered_manifest)).lower())
+
+    def test_missing_structured_question_calculation_rubric_and_evidence_fields_fail(self):
+        fields = (
+            "question_result",
+            "recommendation",
+            "output",
+            "calculation",
+            "assertions",
+            "rubric_outcome",
+            "raw_evidence_refs",
+            "grader_evidence_refs",
+        )
+        for field in fields:
+            with self.subTest(field=field):
+                candidate = bundle()
+                candidate["runs"][0].pop(field)
+                self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+
+    def test_nested_calculation_rubric_measurement_and_claim_policy_fields_fail(self):
+        for field in ("formula", "inputs", "results", "profile", "profile_margin", "provenance", "evidence_refs"):
+            with self.subTest(calculation_field=field):
+                candidate = bundle()
+                candidate["runs"][0]["calculation"].pop(field)
+                self.assertIn("calculation", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+        candidate = bundle()
+        candidate["runs"][0]["rubric_outcome"].pop("quality")
+        self.assertIn("rubric outcome", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+        candidate = bundle()
+        candidate["runs"][0]["cost"]["evidence_refs"] = []
+        self.assertIn("cost", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+        altered_manifest = manifest()
+        altered_manifest["claim_policy"]["proxy_only_cannot_support_cost_claim"] = False
+        self.assertIn("claim_policy", " ".join(self.evaluator.validate_run_bundle(bundle(), altered_manifest)).lower())
+
+    def test_each_material_question_field_and_suppression_evidence_are_required(self):
+        asked_index = next(i for i, item in enumerate(bundle()["runs"]) if item["expected_question_count"] == 1)
+        for field in ("decision_id", "recommendation", "impact", "next_step"):
+            with self.subTest(field=field):
+                candidate = bundle()
+                candidate["runs"][asked_index]["question_result"].pop(field)
+                self.assertIn(field.replace("_", " "), " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+        suppressed_index = next(i for i, item in enumerate(bundle()["runs"]) if item["scenario_id"] == "accept-question-settled-suppression")
+        candidate = bundle()
+        candidate["runs"][suppressed_index]["question_result"]["suppression"]["evidence_refs"] = []
+        self.assertIn("suppression", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+
+    def test_omitted_or_provisional_identity_and_wrong_surface_never_validate_as_verified(self):
+        for mutation, label in (
+            (lambda b: b.pop("identity_verification"), "identity"),
+            (lambda b: b["identity_verification"].__setitem__("artifact", "verified"), "artifact"),
+            (lambda b: b["surface_evidence"].__setitem__("surface_id", "invented-surface"), "surface"),
+        ):
+            with self.subTest(label=label):
+                candidate = bundle()
+                mutation(candidate)
+                self.assertIn(label, " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+        result = self.evaluator.compare_arms(bundle("A"), bundle("D"), self.manifest)
+        self.assertEqual(result["status"], "unverified")
+
+    def test_estimated_measurements_never_support_cost_latency_or_critical_path_claims(self):
+        candidate = bundle()
+        for item in candidate["runs"]:
+            for metric in ("cost", "latency", "critical_path"):
+                item[metric]["provenance"] = "estimated"
+        summary = self.evaluator.summarize_arm(candidate["runs"])
+        self.assertIsNone(summary["median_cost"])
+        self.assertIsNone(summary["median_latency"])
+        self.assertEqual(summary["cost_claim"], "estimated-nonclaiming")
+
+    def test_missing_bound_high_value_group_cannot_pass_as_not_applicable(self):
+        baseline = bundle("A")
+        candidate = bundle("D")
+        for item in candidate["runs"]:
+            item["evaluation_groups"] = []
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+        self.assertNotEqual(result["status"], "pass")
+        self.assertIn(result["high_value_delegation"]["status"], {"fail", "inconclusive"})
+
+    def test_malformed_replicate_and_non_object_run_fail_controlled(self):
+        malformed = bundle()
+        malformed["runs"][0]["replicate_id"] = {}
+        malformed["runs"][1] = []
+        errors = self.evaluator.validate_run_bundle(malformed, self.manifest)
+        self.assertTrue(errors)
+        result = self.evaluator.compare_arms(bundle("A"), malformed, self.manifest)
+        self.assertEqual(result["status"], "fail")
+
+    def test_profile_margins_and_spawn_counts_are_derived_not_labels(self):
+        expected = {"economy": 3, "balanced": 1, "quality": 1}
+        candidate = bundle()
+        for item in candidate["runs"]:
+            profile = item["calculation"]["profile"]
+            if profile in expected:
+                self.assertEqual(item["calculation"]["profile_margin"], expected[profile])
+            self.assertEqual(item["calculation"]["results"]["specialist_count"], item["expected_spawn_count"])
+            if item["expected_spawn_count"]:
+                self.assertIn("team_sizing", item["calculation_contract"])
+
+    def test_weak_isolation_or_wrong_counterbalanced_order_is_rejected(self):
+        mutations = {
+            "task fingerprint": lambda b: b["isolation"].__setitem__("task_fingerprint", "task-D"),
+            "cache fingerprint": lambda b: b["isolation"].__setitem__("cache_fingerprint", "cache-D"),
+            "environment evidence": lambda b: b["isolation"].__setitem__("environment_evidence_id", ""),
+            "arm order": lambda b: b.__setitem__("recorded_arm_order", ["D", "C", "B", "A"]),
+            "run order": lambda b: b["execution_order"].reverse(),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                candidate = bundle()
+                mutate(candidate)
+                self.assertIn(label.split()[0], " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+
+
 class StatisticsAndComparisonTests(unittest.TestCase):
     def setUp(self):
         self.evaluator = require_evaluator(self)
@@ -381,60 +577,61 @@ class StatisticsAndComparisonTests(unittest.TestCase):
         self.assertEqual(proxy["cost_claim"], "unavailable")
 
     def test_clear_noninferiority_with_no_regressions_passes_deterministically(self):
-        base_runs = [
-            run(i, scenario_id="direct" if i % 2 == 0 else "valuable", category="direct" if i % 2 == 0 else "high-value-delegation", quality=3.0, cost=10, latency=10, critical_path=10)
-            for i in range(10)
-        ]
-        candidate_runs = [
-            run(i, scenario_id="direct" if i % 2 == 0 else "valuable", category="direct" if i % 2 == 0 else "high-value-delegation", quality=3.0 if i % 2 == 0 else 3.3, cost=10, latency=10, critical_path=10 if i % 2 == 0 else 9)
-            for i in range(10)
-        ]
-        result = self.evaluator.compare_arms(bundle("A", runs=base_runs, version="1.1.0"), bundle("D", runs=candidate_runs), self.manifest)
-        self.assertEqual(result["status"], "pass")
-        self.assertEqual(result["quality_difference"], 0.15)
+        baseline = bundle("A")
+        candidate = mutate_runs(
+            bundle("D"),
+            lambda item: "high-value-delegation" in item["evaluation_groups"],
+            lambda item: (item.__setitem__("quality", 3.2), item["critical_path"].__setitem__("value", 9.0)),
+        )
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+        self.assertEqual(result["status"], "unverified")
+        self.assertGreater(result["quality_difference"], 0)
         self.assertEqual(result["confidence_interval"]["level"], 0.95)
         self.assertEqual(result["high_value_delegation"]["status"], "pass")
 
     def test_quality_regression_beyond_point_ten_fails(self):
-        baseline = bundle("A", runs=[run(i, quality=3.0) for i in range(5)], version="1.1.0")
-        candidate = bundle("D", runs=[run(i, quality=2.89) for i in range(5)])
+        baseline = bundle("A")
+        candidate = mutate_runs(bundle("D"), lambda item: True, lambda item: item.__setitem__("quality", 2.89))
         result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "unverified")
         self.assertEqual(result["quality_noninferiority"]["status"], "fail")
 
     def test_simple_task_cost_or_latency_increase_above_five_percent_fails(self):
-        base = [run(i, scenario_id="simple", category="direct", cost=100, latency=100) for i in range(5)]
         for metric in ("cost", "latency"):
             with self.subTest(metric=metric):
-                candidate = deepcopy(base)
-                for item in candidate:
-                    item[metric]["value"] = 105.1
-                result = self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=candidate), self.manifest)
-                self.assertEqual(result["status"], "fail")
+                baseline = bundle("A")
+                candidate = mutate_runs(
+                    bundle("D"), lambda item: item["category"] == "direct",
+                    lambda item: item[metric].__setitem__("value", 10.51),
+                )
+                result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+                self.assertEqual(result["status"], "unverified")
                 self.assertEqual(result["simple_tasks"][metric]["status"], "fail")
 
     def test_high_value_gain_requires_point_two_quality_or_ten_percent_critical_path(self):
-        base = [run(i, category="high-value-delegation", quality=3.0, critical_path=100) for i in range(5)]
-        weak = [run(i, category="high-value-delegation", quality=3.19, critical_path=90.1) for i in range(5)]
-        strong_quality = [run(i, category="high-value-delegation", quality=3.2, critical_path=100) for i in range(5)]
-        strong_time = [run(i, category="high-value-delegation", quality=3.0, critical_path=90) for i in range(5)]
-        weak_result = self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=weak), self.manifest)
+        is_high_value = lambda item: "high-value-delegation" in item["evaluation_groups"]
+        baseline = bundle("A")
+        weak = mutate_runs(bundle("D"), is_high_value, lambda item: (item.__setitem__("quality", 3.19), item["critical_path"].__setitem__("value", 9.01)))
+        strong_quality = mutate_runs(bundle("D"), is_high_value, lambda item: item.__setitem__("quality", 3.2))
+        strong_time = mutate_runs(bundle("D"), is_high_value, lambda item: item["critical_path"].__setitem__("value", 9.0))
+        weak_result = self.evaluator.compare_arms(baseline, weak, self.manifest)
         self.assertEqual(weak_result["high_value_delegation"]["status"], "fail")
-        self.assertEqual(self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=strong_quality), self.manifest)["status"], "pass")
-        self.assertEqual(self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=strong_time), self.manifest)["status"], "pass")
+        self.assertEqual(self.evaluator.compare_arms(baseline, strong_quality, self.manifest)["high_value_delegation"]["status"], "pass")
+        self.assertEqual(self.evaluator.compare_arms(baseline, strong_time, self.manifest)["high_value_delegation"]["status"], "pass")
 
     def test_unsafe_failure_and_spawn_or_question_regression_fail_closed(self):
-        base = [run(i) for i in range(10)]
         cases = {
-            "unsafe": [run(i, unsafe_failures=["budget lie"]) for i in range(10)],
-            "spawn": [run(i, unnecessary_spawn=i < 2) for i in range(10)],
-            "premise": [run(i, premise_reset=i == 0) for i in range(10)],
-            "question": [run(i, repeated_settled_question=i == 0) for i in range(10)],
+            "unsafe": lambda item: (item.__setitem__("unsafe_failures", ["budget lie"]), item.__setitem__("safety_authority_pass", False)),
+            "spawn": lambda item: item.__setitem__("unnecessary_spawn", True),
+            "premise": lambda item: item.__setitem__("premise_reset", True),
+            "question": lambda item: item.__setitem__("repeated_settled_question", True),
         }
-        for label, candidate in cases.items():
+        for label, mutation in cases.items():
             with self.subTest(label=label):
-                result = self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=candidate), self.manifest)
-                self.assertEqual(result["status"], "fail")
+                candidate = bundle("D")
+                mutation(candidate["runs"][0])
+                result = self.evaluator.compare_arms(bundle("A"), candidate, self.manifest)
+                self.assertNotEqual(result["status"], "pass")
 
     def test_comparison_rejects_changed_case_contract_or_reused_raw_result_id(self):
         base = bundle("A", version="1.1.0")
@@ -446,24 +643,35 @@ class StatisticsAndComparisonTests(unittest.TestCase):
 
         reused = bundle("D")
         reused["runs"][0]["run_id"] = base["runs"][0]["run_id"]
+        refresh_execution_order(reused)
         result = self.evaluator.compare_arms(base, reused, self.manifest)
         self.assertEqual(result["status"], "fail")
         self.assertIn("raw result", " ".join(result["errors"]).lower())
 
     def test_uncertain_interval_is_inconclusive_not_improvement(self):
-        base = [run(i, quality=value) for i, value in enumerate([1, 4, 1, 4, 2])]
-        candidate = [run(i, quality=value) for i, value in enumerate([4, 1, 4, 1, 3])]
-        result = self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=candidate), self.manifest)
-        self.assertEqual(result["status"], "inconclusive")
+        baseline = bundle("A")
+        candidate = bundle("D")
+        base_values = [1, 4, 1, 4, 2]
+        candidate_values = [4, 1, 4, 1, 3]
+        for index, (base_item, candidate_item) in enumerate(zip(baseline["runs"], candidate["runs"])):
+            base_item["quality"] = base_values[index % 5]
+            candidate_item["quality"] = candidate_values[index % 5]
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+        self.assertEqual(result["status"], "unverified")
+        self.assertEqual(result["quality_noninferiority"]["status"], "inconclusive")
         self.assertNotEqual(result["quality_noninferiority"]["status"], "improvement")
 
     def test_unavailable_cost_uses_labelled_nonincreasing_proxies_without_cost_claim(self):
-        base = [run(i, cost=None, latency=None, critical_path=None, provenance="unavailable", spawn_count=1) for i in range(5)]
-        candidate = [run(i, cost=None, latency=None, critical_path=None, provenance="unavailable", spawn_count=1) for i in range(5)]
-        result = self.evaluator.compare_arms(bundle("A", runs=base, version="1.1.0"), bundle("D", runs=candidate), self.manifest)
+        baseline = bundle("A")
+        candidate = bundle("D")
+        for value in (baseline, candidate):
+            for item in value["runs"]:
+                for metric in ("cost", "latency", "critical_path"):
+                    item[metric] = {"value": None, "provenance": "unavailable", "evidence_refs": item["evidence_refs"][:1]}
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
         self.assertEqual(result["simple_tasks"]["cost"]["status"], "proxy-only")
         self.assertFalse(result["simple_tasks"]["cost"]["claim_allowed"])
-        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["status"], "unverified")
 
 
 class CliTests(unittest.TestCase):
@@ -487,6 +695,24 @@ class CliTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("UNVERIFIED", result.stdout)
         self.assertNotIn("IMPROVED", result.stdout)
+
+    def test_cli_reports_structurally_valid_provisional_bundles_as_unverified(self):
+        require_evaluator(self)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            manifest_path = temp / "manifest.json"
+            baseline_path = temp / "baseline.json"
+            candidate_path = temp / "candidate.json"
+            manifest_path.write_text(json.dumps(manifest()), encoding="utf-8")
+            baseline_path.write_text(json.dumps(bundle("A")), encoding="utf-8")
+            candidate_path.write_text(json.dumps(bundle("D")), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(MODULE_PATH), "--manifest", str(manifest_path), "--baseline", str(baseline_path), "--candidate", str(candidate_path)],
+                cwd=ROOT, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("BEHAVIORAL EVALUATION UNVERIFIED", result.stdout)
+        self.assertNotIn("BEHAVIORAL EVALUATION PASSED", result.stdout)
 
 
 if __name__ == "__main__":

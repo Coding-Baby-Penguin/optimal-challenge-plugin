@@ -12,7 +12,7 @@ import json
 import math
 import random
 import statistics
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,28 @@ ARM_POLICIES = {
     "C": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "disabled", "premise_gate": "disabled"},
     "D": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "enabled", "premise_gate": "enabled"},
 }
+ROOT = Path(__file__).resolve().parents[1]
+CANONICAL_FILES = {
+    ("prompt_hashes", "router"): ROOT / "skills" / "optimal-challenge" / "SKILL.md",
+    ("prompt_hashes", "question_bundle"): ROOT / "skills" / "optimal-challenge" / "templates" / "question-bundle.md",
+    ("fixture_hashes", "behavioral_acceptance"): ROOT / "tests" / "behavioral-acceptance.json",
+    ("fixture_hashes", "team_routing"): ROOT / "tests" / "team-routing.json",
+    (None, "config_sha256"): ROOT / "config" / "orchestration.json",
+}
+KNOWN_SURFACES = frozenset({
+    "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
+})
+PROFILE_MARGINS = {"economy": 3, "balanced": 1, "quality": 1}
+RUBRIC_DIMENSIONS = frozenset({
+    "quality", "safety_authority", "budget_truthfulness", "failure_visibility"
+})
+REQUIRED_CLAIM_POLICY = {
+    "structural_validation_is_not_host_behavior_proof": True,
+    "unverified_surfaces_are_excluded": True,
+    "inconclusive_is_not_improvement": True,
+    "proxy_only_cannot_support_cost_claim": True,
+    "refresh_candidate_identity_after_release_build": True,
+}
 
 
 def _is_text(value: Any) -> bool:
@@ -71,6 +93,17 @@ def _manifest_digest(manifest: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_acceptance() -> Mapping[str, Any]:
+    value = json.loads(CANONICAL_FILES[("fixture_hashes", "behavioral_acceptance")].read_text(encoding="utf-8"))
+    if not isinstance(value, Mapping):
+        raise ValueError("canonical behavioral acceptance fixture must be an object")
+    return value
+
+
 def _mapping(value: Any) -> Mapping[str, Any] | None:
     return value if isinstance(value, Mapping) else None
 
@@ -86,6 +119,8 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
         *PINNED_FIELDS,
         "minimum_run_count",
         "arms",
+        "run_policy",
+        "claim_policy",
     }
     for field in sorted(required - set(manifest)):
         errors.append(f"manifest.{field} is required")
@@ -95,11 +130,26 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
             errors.append(f"manifest.{group} must be a non-empty object")
         elif any(not _is_sha256(value) for value in values.values()):
             errors.append(f"manifest.{group} values must be lowercase SHA-256 hashes")
+        expected_keys = {"router", "question_bundle"} if group == "prompt_hashes" else {"behavioral_acceptance", "team_routing"}
+        if values is not None and set(values) != expected_keys:
+            errors.append(f"manifest.{group} must contain exactly the canonical hash keys")
+    for (group, field), path in CANONICAL_FILES.items():
+        try:
+            actual = _file_sha256(path)
+        except OSError as exc:
+            errors.append(f"canonical {field} cannot be read: {exc}")
+            continue
+        pinned = manifest.get(field) if group is None else (_mapping(manifest.get(group)) or {}).get(field)
+        if pinned != actual:
+            label = field if group is None else f"{group}.{field}"
+            errors.append(f"manifest {label} differs from independently hashed canonical {field}")
     if not _is_sha256(manifest.get("config_sha256")):
         errors.append("manifest.config_sha256 must be a lowercase SHA-256 hash")
     for field in ("host", "surface", "model", "reasoning", "profile", "evaluator_version", "rubric_version"):
         if not _is_text(manifest.get(field)):
             errors.append(f"manifest.{field} must be a non-empty string")
+    if manifest.get("surface") not in KNOWN_SURFACES:
+        errors.append("manifest.surface must be a validated supported surface identifier")
     tools = _sequence(manifest.get("tool_set"))
     if not tools or any(not _is_text(tool) for tool in tools) or len(set(tools)) != len(tools):
         errors.append("manifest.tool_set must contain unique non-empty strings")
@@ -107,8 +157,15 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
     if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 5:
         errors.append("manifest.minimum_run_count must be an integer of at least 5")
     randomization = _mapping(manifest.get("randomization"))
-    if not randomization or not _is_text(randomization.get("method")) or not isinstance(randomization.get("seed"), int):
-        errors.append("manifest.randomization requires method and integer seed")
+    if not randomization or randomization.get("method") != "seeded-counterbalance" or not isinstance(randomization.get("seed"), int):
+        errors.append("manifest.randomization requires seeded-counterbalance and integer seed")
+    elif randomization.get("execution_order") != ["A", "D", "B", "C"] or randomization.get("record_actual_order") is not True:
+        errors.append("manifest.randomization must pin the exact A,D,B,C counterbalanced order and record it")
+    run_policy = _mapping(manifest.get("run_policy"))
+    if not run_policy or run_policy.get("deterministic_structural_runs") != 1 or run_policy.get("stochastic_behavioral_runs_per_case_per_arm") != 5:
+        errors.append("manifest.run_policy must require one deterministic and five stochastic repetitions")
+    if manifest.get("claim_policy") != REQUIRED_CLAIM_POLICY:
+        errors.append("manifest.claim_policy must match the fail-closed canonical claim policy")
     required_margins = {
         "quality_noninferiority": 0.10,
         "simple_task_cost_latency": 0.05,
@@ -144,6 +201,8 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
                     errors.append(f"manifest.arms[{index}].{field} must be a non-empty string")
             if not _is_sha256(arm.get("archive_sha256")):
                 errors.append(f"manifest.arms[{index}].archive_sha256 must be a lowercase SHA-256 hash")
+            if not _is_text(arm.get("identity_status")):
+                errors.append(f"manifest.arms[{index}].identity_status must be explicit")
             if _is_text(arm_id) and arm_id in ARM_POLICIES and arm.get("policy_overrides") != ARM_POLICIES[arm_id]:
                 errors.append(f"manifest.arms[{index}].policy_overrides does not match arm {arm_id}")
             read_back = _mapping(arm.get("installed_plugin_read_back"))
@@ -176,14 +235,33 @@ def _validate_measurement(value: Any, path: str, errors: list[str]) -> None:
             errors.append(f"{path} unavailable measurement must not contain a value")
     elif not _is_number(amount) or float(amount) < 0:
         errors.append(f"{path}.value must be a non-negative finite number")
+    refs = _sequence(measurement.get("evidence_refs"))
+    if not refs or any(not _sanitized_ref(ref) for ref in refs):
+        errors.append(f"{path}.evidence refs must contain sanitized raw references")
 
 
-def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> list[str]:
-    """Return actionable errors for a recorded arm, failing closed on drift."""
+def _sanitized_ref(value: Any) -> bool:
+    return _is_text(value) and "\n" not in value and "\r" not in value and len(value) <= 512
 
-    errors = _manifest_errors(manifest)
-    if not isinstance(bundle, Mapping):
-        return errors + ["bundle must be an object"]
+
+def _validate_ref_list(value: Any, path: str, errors: list[str]) -> list[str]:
+    refs = _sequence(value)
+    if not refs or any(not _sanitized_ref(ref) for ref in refs):
+        errors.append(f"{path.replace('_', ' ')} must contain sanitized evidence references")
+        return []
+    return list(refs)
+
+
+def _expected_repetitions(case: Mapping[str, Any], fixture: Mapping[str, Any]) -> tuple[str, int]:
+    policy = _mapping(fixture.get("execution_policy")) or {}
+    run_kind = str(case.get("run_kind", policy.get("default_run_kind", "stochastic")))
+    value = policy.get(f"{run_kind}_repetitions")
+    return run_kind, value if isinstance(value, int) and not isinstance(value, bool) else -1
+
+
+def _validate_bundle_header(
+    bundle: Mapping[str, Any], manifest: Mapping[str, Any], errors: list[str]
+) -> tuple[Any, Mapping[str, Any] | None]:
     arm_id = bundle.get("arm_id")
     expected_arm = _arm(manifest, arm_id)
     if expected_arm is None:
@@ -191,162 +269,317 @@ def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) 
     for field in PINNED_FIELDS:
         if bundle.get(field) != manifest.get(field):
             errors.append(f"bundle.{field} differs from the pinned manifest")
-    if not _is_sha256(bundle.get("manifest_sha256")):
-        errors.append("bundle.manifest_sha256 must be a lowercase SHA-256 hash")
-    elif bundle.get("manifest_sha256") != _manifest_digest(manifest):
+    if bundle.get("manifest_sha256") != _manifest_digest(manifest):
         errors.append("bundle.manifest_sha256 does not identify the supplied manifest")
-
-    selected_subject = _mapping(bundle.get("subject"))
-    if selected_subject is None:
+    subject = _mapping(bundle.get("subject"))
+    if subject is None:
         errors.append("bundle.subject is required")
     elif expected_arm is not None:
-        if selected_subject.get("arm_id") != arm_id:
+        if subject.get("arm_id") != arm_id:
             errors.append("bundle.subject.arm_id must match bundle.arm_id")
         for field in IDENTITY_FIELDS:
-            if selected_subject.get(field) != expected_arm.get(field):
+            if subject.get(field) != expected_arm.get(field):
                 errors.append(f"bundle.subject {field} does not match pinned plugin identity")
-        if selected_subject.get("policy_overrides") != expected_arm.get("policy_overrides"):
+        if subject.get("policy_overrides") != expected_arm.get("policy_overrides") or bundle.get("arm_policy") != expected_arm.get("policy_overrides"):
             errors.append("bundle.subject arm policy does not match the pinned ablation")
-        if bundle.get("arm_policy") != expected_arm.get("policy_overrides"):
-            errors.append("bundle.arm_policy does not match the pinned arm policy")
-        if not _is_sha256(selected_subject.get("archive_sha256")):
-            errors.append("bundle.subject archive must be a lowercase SHA-256 hash")
-        expected_read_back = _mapping(expected_arm.get("installed_plugin_read_back"))
-        read_back = _mapping(selected_subject.get("installed_plugin_read_back"))
+        expected_read_back = _mapping(expected_arm.get("installed_plugin_read_back")) or {}
+        read_back = _mapping(subject.get("installed_plugin_read_back"))
         if read_back is None:
             errors.append("bundle.subject installed plugin read-back is required")
-        elif expected_read_back is not None:
+        else:
             for field in ("name", "version", "cachebuster", "archive_sha256"):
                 if read_back.get(field) != expected_read_back.get(field):
                     label = "plugin version" if field == "version" else field
                     errors.append(f"bundle.subject installed {label} read-back mismatch")
+        verification = _mapping(bundle.get("identity_verification"))
+        expected_status = expected_arm.get("identity_status")
+        if verification is None:
+            errors.append("bundle identity verification is required")
+        else:
+            if verification.get("artifact") != expected_status:
+                errors.append("bundle artifact identity verification must truthfully match manifest status")
+            if verification.get("installed_read_back") != expected_status:
+                errors.append("bundle installed read-back identity verification must truthfully match manifest status")
+            if verification.get("run_identity") != "verified":
+                errors.append("bundle run identity status must be explicitly verified")
+            if verification.get("surface") != "verified":
+                errors.append("bundle surface identity status must be explicitly verified")
+    surface = manifest.get("surface")
+    surface_evidence = _mapping(bundle.get("surface_evidence"))
+    if not surface_evidence or surface_evidence.get("surface_id") != surface or surface_evidence.get("status") != "verified" or not _sanitized_ref(surface_evidence.get("evidence_ref")):
+        errors.append("bundle surface evidence must identify the validated manifest surface as verified")
+    return arm_id, expected_arm
 
+
+def _validate_isolation(
+    bundle: Mapping[str, Any], manifest: Mapping[str, Any], arm_id: Any,
+    expected_arm: Mapping[str, Any] | None, errors: list[str]
+) -> None:
     isolation = _mapping(bundle.get("isolation"))
     if isolation is None:
         errors.append("bundle.isolation is required")
+        return
+    for field, label in (("fresh_task", "task"), ("cache_cleared", "cache"), ("fresh_registry", "registry"), ("fresh_ledger", "ledger")):
+        if isolation.get(field) is not True:
+            errors.append(f"bundle isolation {label} requirement failed")
+    if isolation.get("prior_arm_state_detected") is not False:
+        errors.append("bundle isolation ledger/cache prior-arm state leakage detected")
+    for field in ("task_fingerprint", "cache_fingerprint", "artifact_fingerprint", "registry_fingerprint", "ledger_fingerprint", "config_fingerprint"):
+        if not _is_sha256(isolation.get(field)):
+            errors.append(f"bundle isolation {field.replace('_', ' ')} must be a SHA-256 fingerprint")
+    if expected_arm is not None and isolation.get("artifact_fingerprint") != expected_arm.get("archive_sha256"):
+        errors.append("bundle isolation artifact fingerprint does not match pinned subject")
+    if isolation.get("config_fingerprint") != manifest.get("config_sha256"):
+        errors.append("bundle isolation config fingerprint mismatch")
+    if not _sanitized_ref(isolation.get("environment_evidence_id")):
+        errors.append("bundle isolation environment evidence is required")
+    randomization = _mapping(manifest.get("randomization")) or {}
+    expected_order = randomization.get("execution_order")
+    if bundle.get("recorded_arm_order") != expected_order:
+        errors.append("bundle recorded arm order must exactly match the counterbalanced manifest arm order")
+    if isinstance(expected_order, list) and arm_id in expected_order and bundle.get("arm_position") != expected_order.index(arm_id) + 1:
+        errors.append("bundle arm position does not match recorded arm order")
+    evidence = _mapping(bundle.get("randomization_evidence"))
+    if not evidence or evidence.get("seed") != randomization.get("seed") or evidence.get("method") != randomization.get("method") or not _sanitized_ref(evidence.get("evidence_ref")):
+        errors.append("bundle randomization evidence does not prove the pinned arm order")
+
+
+def _validate_question(
+    record: Mapping[str, Any], case: Mapping[str, Any], path: str, errors: list[str]
+) -> None:
+    result = _mapping(record.get("question_result"))
+    expected = case.get("expected_question_count")
+    if result is None:
+        errors.append(f"{path} question result is required")
+        return
+    if result.get("asked_count") != expected:
+        errors.append(f"{path} question result asked count differs from contract")
+    contract = _mapping(case.get("question_contract"))
+    if expected:
+        for field in ("decision_id", "recommendation", "impact", "next_step"):
+            if not _is_text(result.get(field)):
+                errors.append(f"{path} question result {field.replace('_', ' ')} is required")
+        if contract and result.get("decision_id") != contract.get("decision_id"):
+            errors.append(f"{path} question result decision id differs from contract")
+    suppression = _mapping(result.get("suppression"))
+    if suppression is None or not isinstance(suppression.get("applied"), bool) or not _is_text(suppression.get("reason")):
+        errors.append(f"{path} question suppression result is required")
+        return
+    refs = _validate_ref_list(suppression.get("evidence_refs"), f"{path} question suppression evidence", errors)
+    if case.get("id") == "accept-question-settled-suppression" and (suppression.get("applied") is not True or not refs):
+        errors.append(f"{path} settled question suppression must be applied with evidence")
+
+
+def _validate_calculation(
+    record: Mapping[str, Any], case: Mapping[str, Any], path: str, errors: list[str]
+) -> None:
+    calculation = _mapping(record.get("calculation"))
+    contract = _mapping(case.get("calculation_assertions")) or {}
+    if calculation is None:
+        errors.append(f"{path} calculation is required")
+        return
+    for field in ("formula", "provenance"):
+        if not _is_text(calculation.get(field)):
+            errors.append(f"{path} calculation {field} is required")
+    inputs = _mapping(calculation.get("inputs"))
+    results = _mapping(calculation.get("results"))
+    if inputs is None:
+        errors.append(f"{path} calculation inputs are required")
+    if results is None:
+        errors.append(f"{path} calculation results are required")
+    _validate_ref_list(calculation.get("evidence_refs"), f"{path} calculation evidence", errors)
+    for field in _sequence(contract.get("required_fields")) or ():
+        if inputs is None or field not in inputs:
+            errors.append(f"{path} calculation input {field} is required")
+    if "provenance" in contract and calculation.get("provenance") != contract.get("provenance"):
+        errors.append(f"{path} calculation provenance differs from contract")
+    expected_spawn = case.get("expected_spawn_count")
+    sizing = _mapping(contract.get("team_sizing"))
+    if expected_spawn and sizing is None:
+        errors.append(f"{path} calculation contract requires team sizing for nonzero specialist count")
+    if sizing is not None:
+        if calculation.get("formula") != sizing.get("formula") or sizing.get("expected_specialists") != expected_spawn:
+            errors.append(f"{path} team sizing formula or expected specialist count differs from contract")
+        numeric_items = [(key, value) for key, value in sizing.items() if key not in {"formula", "expected_specialists"}]
+        if not numeric_items or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for _, value in numeric_items):
+            errors.append(f"{path} team sizing inputs must be non-negative integers")
+        elif min(value for _, value in numeric_items) != expected_spawn:
+            errors.append(f"{path} team sizing calculation does not derive expected specialist count")
+        if inputs is not None and any(inputs.get(key) != value for key, value in numeric_items):
+            errors.append(f"{path} calculation inputs differ from team sizing contract")
+    if results is not None and results.get("specialist_count") != expected_spawn:
+        errors.append(f"{path} calculation specialist count does not match acceptance contract")
+    config = _mapping(case.get("config")) or {}
+    profile = str(config.get("profile", "balanced"))
+    expected_margin = config.get("delegation_margin") if profile == "custom" else PROFILE_MARGINS.get(profile)
+    if calculation.get("profile") != profile or calculation.get("profile_margin") != expected_margin:
+        errors.append(f"{path} calculation profile margin is incorrect")
+
+
+def _validate_outputs(record: Mapping[str, Any], path: str, errors: list[str]) -> None:
+    if not _is_text(record.get("recommendation")):
+        errors.append(f"{path} recommendation is required")
+    if not _is_text(record.get("output")):
+        errors.append(f"{path} output is required")
+    _validate_ref_list(record.get("evidence_refs"), f"{path} evidence refs", errors)
+    _validate_ref_list(record.get("raw_evidence_refs"), f"{path} raw_evidence_refs", errors)
+    _validate_ref_list(record.get("grader_evidence_refs"), f"{path} grader_evidence_refs", errors)
+    assertions = _sequence(record.get("assertions"))
+    if not assertions:
+        errors.append(f"{path} assertions are required")
     else:
-        for field, label in (
-            ("fresh_task", "task"),
-            ("cache_cleared", "cache"),
-            ("fresh_registry", "registry"),
-            ("fresh_ledger", "ledger"),
-        ):
-            if isolation.get(field) is not True:
-                errors.append(f"bundle isolation {label} requirement failed")
-        if isolation.get("prior_arm_state_detected") is not False:
-            errors.append("bundle isolation ledger/cache prior-arm state leakage detected")
-        if isolation.get("config_fingerprint") != manifest.get("config_sha256"):
-            errors.append("bundle isolation config fingerprint mismatch")
-        for field in ("registry_fingerprint", "ledger_fingerprint"):
-            if not _is_text(isolation.get(field)):
-                errors.append(f"bundle.isolation.{field} is required")
+        for value in assertions:
+            item = _mapping(value)
+            if not item or not _is_text(item.get("id")) or not _is_text(item.get("provenance")):
+                errors.append(f"{path} assertions require id and provenance")
+                break
+            _validate_ref_list(item.get("evidence_refs"), f"{path} assertion evidence", errors)
+    rubric = _mapping(record.get("rubric_outcome"))
+    if rubric is None or set(rubric) != RUBRIC_DIMENSIONS:
+        errors.append(f"{path} rubric outcome must contain every rubric dimension")
+    else:
+        for dimension, value in rubric.items():
+            outcome = _mapping(value)
+            if not outcome or not _is_number(outcome.get("score")) or not QUALITY_MIN <= float(outcome.get("score")) <= QUALITY_MAX or not isinstance(outcome.get("passed"), bool):
+                errors.append(f"{path} rubric outcome {dimension} is invalid")
+            else:
+                _validate_ref_list(outcome.get("evidence_refs"), f"{path} rubric outcome {dimension} evidence", errors)
 
-    runs = _sequence(bundle.get("runs"))
-    if runs is None:
+
+def _validate_run(
+    record: Mapping[str, Any], case: Mapping[str, Any], fixture: Mapping[str, Any],
+    path: str, errors: list[str]
+) -> int | None:
+    replicate = record.get("replicate_id")
+    if not isinstance(replicate, int) or isinstance(replicate, bool) or replicate < 0:
+        errors.append(f"{path}.replicate_id must be a non-negative integer")
+        replicate = None
+    if not _is_text(record.get("run_id")):
+        errors.append(f"{path}.run_id must be a non-empty string")
+    expected_kind, _ = _expected_repetitions(case, fixture)
+    bindings = {
+        "source_case_id": case.get("source_case_id"),
+        "case_sha256": _manifest_digest(case),
+        "prompt_sha256": hashlib.sha256(str(case.get("prompt", "")).encode("utf-8")).hexdigest(),
+        "category": case.get("category"),
+        "run_kind": expected_kind,
+        "evaluation_groups": case.get("evaluation_groups", []),
+        "expected_route": case.get("expected_route"),
+        "expected_question_count": case.get("expected_question_count"),
+        "expected_spawn_count": case.get("expected_spawn_count"),
+        "prohibited_behaviors": case.get("prohibited_behaviors"),
+        "evidence_requirement": case.get("evidence_requirement"),
+        "question_contract": case.get("question_contract"),
+        "calculation_contract": case.get("calculation_assertions"),
+        "rubric_contract": case.get("rubric"),
+    }
+    for field, expected in bindings.items():
+        if record.get(field) != expected:
+            errors.append(f"{path}.{field.replace('_', ' ')} differs from canonical case contract")
+    quality = record.get("quality")
+    if not _is_number(quality) or not QUALITY_MIN <= float(quality) <= QUALITY_MAX:
+        errors.append(f"{path}.quality must be between 0 and 4")
+    for field in ("passed", "safety_authority_pass", "budget_truthfulness_pass", "failure_visibility_pass"):
+        if not isinstance(record.get(field), bool):
+            errors.append(f"{path}.{field} must be boolean")
+    unsafe = _sequence(record.get("unsafe_failures"))
+    if unsafe is None:
+        errors.append(f"{path}.unsafe_failures must be an array")
+    elif unsafe or record.get("safety_authority_pass") is not True:
+        errors.append(f"{path} has unsafe safety/authority failures")
+    if record.get("budget_truthfulness_pass") is not True:
+        errors.append(f"{path} budget truthfulness failed")
+    if record.get("failure_visibility_pass") is not True:
+        errors.append(f"{path} failure visibility failed")
+    failed = record.get("passed") is False
+    if record.get("observed_route") != case.get("expected_route") and not failed:
+        errors.append(f"{path} route does not match acceptance contract")
+    proxies = _mapping(record.get("proxies"))
+    if proxies is None:
+        errors.append(f"{path}.proxies must be an object")
+    else:
+        for field in ("model_calls", "spawn_count", "tool_calls", "question_count"):
+            value = proxies.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                errors.append(f"{path}.proxies.{field} must be a non-negative integer")
+        if not failed and proxies.get("spawn_count") != case.get("expected_spawn_count"):
+            errors.append(f"{path} spawn count does not match acceptance contract")
+        if not failed and proxies.get("question_count") != case.get("expected_question_count"):
+            errors.append(f"{path} question count does not match acceptance contract")
+    prohibited = _sequence(record.get("prohibited_behaviors"))
+    observed = _sequence(record.get("observed_behaviors"))
+    if prohibited is None or observed is None or any(not _is_text(item) for item in prohibited) or any(not _is_text(item) for item in observed):
+        errors.append(f"{path} prohibited and observed behaviors must be arrays of non-empty strings")
+    elif set(prohibited) & set(observed) and not failed:
+        errors.append(f"{path} prohibited behavior observed")
+    for metric in ("cost", "latency", "critical_path"):
+        _validate_measurement(record.get(metric), f"{path}.{metric}", errors)
+    for field in ("unnecessary_spawn", "premise_reset", "repeated_settled_question"):
+        if not isinstance(record.get(field), bool):
+            errors.append(f"{path}.{field} must be boolean")
+    _validate_question(record, case, path, errors)
+    _validate_calculation(record, case, path, errors)
+    _validate_outputs(record, path, errors)
+    return replicate
+
+
+def validate_run_bundle(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> list[str]:
+    """Validate a host bundle against repository-owned canonical contracts."""
+
+    errors = _manifest_errors(manifest)
+    if not isinstance(bundle, Mapping):
+        return errors + ["bundle must be an object"]
+    try:
+        fixture = _canonical_acceptance()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return errors + [f"canonical behavioral acceptance fixture unavailable: {exc}"]
+    surface = manifest.get("surface")
+    canonical_cases = {
+        str(case["id"]): case for case in (_sequence(fixture.get("cases")) or ())
+        if isinstance(case, Mapping) and _is_text(case.get("id")) and case.get("surface") == surface
+    }
+    arm_id, expected_arm = _validate_bundle_header(bundle, manifest, errors)
+    _validate_isolation(bundle, manifest, arm_id, expected_arm, errors)
+    runs_value = _sequence(bundle.get("runs"))
+    if runs_value is None:
         errors.append("bundle.runs must be an array")
-        runs = ()
-    minimum = manifest.get("minimum_run_count")
-    if isinstance(minimum, int) and len(runs) < minimum:
-        errors.append(f"bundle.runs does not meet minimum run count {minimum}")
+        runs_value = ()
+    runs = list(runs_value)
     if bundle.get("run_count") != len(runs):
-        errors.append("bundle.run_count must equal the recorded run count")
+        errors.append("bundle.run_count must equal recorded run count")
+    run_ids = [record.get("run_id") for record in runs if isinstance(record, Mapping) and _is_text(record.get("run_id"))]
     execution_order = _sequence(bundle.get("execution_order"))
-    if execution_order is None or list(execution_order) != list(range(1, len(runs) + 1)):
-        errors.append("bundle.execution_order must enumerate every recorded run exactly once")
-
-    run_ids: list[Any] = []
-    replicate_keys: list[tuple[str, int]] = []
-    run_kinds_by_scenario: dict[str, list[str]] = defaultdict(list)
-    for index, run_value in enumerate(runs):
+    if execution_order is None or list(execution_order) != run_ids or len(run_ids) != len(runs):
+        errors.append("bundle.execution_order must enumerate every recorded run ID exactly in actual run order")
+    elif bundle.get("execution_order_sha256") != _manifest_digest(list(execution_order)):
+        errors.append("bundle run order SHA-256 does not match actual execution order")
+    seen: dict[str, set[int]] = defaultdict(set)
+    for index, value in enumerate(runs):
         path = f"bundle.runs[{index}]"
-        record = _mapping(run_value)
+        record = _mapping(value)
         if record is None:
             errors.append(f"{path} must be an object")
             continue
-        run_id = record.get("run_id")
-        if not _is_text(run_id):
-            errors.append(f"{path}.run_id must be a non-empty string")
-        else:
-            run_ids.append(run_id)
-        replicate_id = record.get("replicate_id")
-        if not isinstance(replicate_id, int) or isinstance(replicate_id, bool) or replicate_id < 0:
-            errors.append(f"{path}.replicate_id must be a non-negative integer")
-        elif _is_text(record.get("scenario_id")):
-            replicate_keys.append((str(record["scenario_id"]), replicate_id))
-        for field in ("scenario_id", "category", "expected_route", "observed_route"):
-            if not _is_text(record.get(field)):
-                errors.append(f"{path}.{field} must be a non-empty string")
-        run_kind = record.get("run_kind")
-        if run_kind not in {"deterministic", "stochastic"}:
-            errors.append(f"{path}.run_kind must be deterministic or stochastic")
-        elif _is_text(record.get("scenario_id")):
-            run_kinds_by_scenario[str(record["scenario_id"])].append(run_kind)
-        quality = record.get("quality")
-        if not _is_number(quality) or not QUALITY_MIN <= float(quality) <= QUALITY_MAX:
-            errors.append(f"{path}.quality must be between 0 and 4")
-        for field in ("passed", "safety_authority_pass", "budget_truthfulness_pass", "failure_visibility_pass"):
-            if not isinstance(record.get(field), bool):
-                errors.append(f"{path}.{field} must be boolean")
-        unsafe = _sequence(record.get("unsafe_failures"))
-        if unsafe is None:
-            errors.append(f"{path}.unsafe_failures must be an array")
-        elif unsafe or record.get("safety_authority_pass") is not True:
-            errors.append(f"{path} has unsafe safety/authority failures")
-        if record.get("budget_truthfulness_pass") is not True:
-            errors.append(f"{path} budget truthfulness failed")
-        if record.get("failure_visibility_pass") is not True:
-            errors.append(f"{path} failure visibility failed")
-        behavior_failed = record.get("passed") is False
-        if record.get("observed_route") != record.get("expected_route") and not behavior_failed:
-            errors.append(f"{path} route does not match acceptance contract")
-        proxies = _mapping(record.get("proxies"))
-        if proxies is None:
-            errors.append(f"{path}.proxies must be an object")
-        else:
-            for field in ("model_calls", "spawn_count", "tool_calls", "question_count"):
-                value = proxies.get(field)
-                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                    errors.append(f"{path}.proxies.{field} must be a non-negative integer")
-            if proxies.get("spawn_count") != record.get("expected_spawn_count") and not behavior_failed:
-                errors.append(f"{path} spawn count does not match acceptance contract")
-            if proxies.get("question_count") != record.get("expected_question_count") and not behavior_failed:
-                errors.append(f"{path} question count does not match acceptance contract")
-        prohibited = _sequence(record.get("prohibited_behaviors"))
-        observed = _sequence(record.get("observed_behaviors"))
-        if (
-            prohibited is None
-            or observed is None
-            or any(not _is_text(item) for item in prohibited)
-            or any(not _is_text(item) for item in observed)
-        ):
-            errors.append(f"{path} prohibited and observed behaviors must be arrays of non-empty strings")
-        else:
-            violations = sorted(set(prohibited) & set(observed))
-            if violations and not behavior_failed:
-                errors.append(f"{path} prohibited behavior observed: {', '.join(violations)}")
-        evidence = _sequence(record.get("evidence_refs"))
-        if not evidence or any(not _is_text(item) for item in evidence):
-            errors.append(f"{path} evidence refs must contain at least one reference")
-        for metric in ("cost", "latency", "critical_path"):
-            _validate_measurement(record.get(metric), f"{path}.{metric}", errors)
-        for field in ("unnecessary_spawn", "premise_reset", "repeated_settled_question"):
-            if not isinstance(record.get(field), bool):
-                errors.append(f"{path}.{field} must be boolean")
-    counts = Counter(run_ids)
-    if any(count > 1 for count in counts.values()):
+        scenario = record.get("scenario_id")
+        case = canonical_cases.get(scenario) if _is_text(scenario) else None
+        if case is None:
+            errors.append(f"{path} invented or inapplicable case {scenario!r} is not in canonical surface matrix")
+            continue
+        replicate = _validate_run(record, case, fixture, path, errors)
+        if replicate is not None:
+            if replicate in seen[str(scenario)]:
+                errors.append(f"{path} duplicate canonical case replicate")
+            seen[str(scenario)].add(replicate)
+    for scenario, case in canonical_cases.items():
+        run_kind, repetitions = _expected_repetitions(case, fixture)
+        expected = set(range(repetitions)) if repetitions >= 0 else set()
+        if seen.get(scenario, set()) != expected:
+            errors.append(
+                f"bundle missing canonical case repetitions or has extras for {scenario}: "
+                f"per {run_kind} scenario minimum/exact count is {repetitions}"
+            )
+    if len(run_ids) != len(set(run_ids)):
         errors.append("bundle.runs contains duplicate run_id values")
-    if len(set(replicate_keys)) != len(replicate_keys):
-        errors.append("bundle.runs contains duplicate scenario/replicate identities")
-    if isinstance(minimum, int):
-        for scenario_id, kinds in sorted(run_kinds_by_scenario.items()):
-            if len(set(kinds)) != 1:
-                errors.append(f"bundle scenario {scenario_id} mixes deterministic and stochastic runs")
-            elif kinds[0] == "stochastic" and len(kinds) < minimum:
-                errors.append(
-                    f"bundle requires at least {minimum} runs per stochastic scenario; {scenario_id} has {len(kinds)}"
-                )
-            elif kinds[0] == "deterministic" and len(kinds) != 1:
-                errors.append(f"bundle deterministic scenario {scenario_id} must run exactly once")
     return errors
 
 
@@ -354,7 +587,7 @@ def _measured_values(runs: Sequence[Mapping[str, Any]], metric: str) -> list[flo
     values: list[float] = []
     for record in runs:
         measurement = _mapping(record.get(metric))
-        if measurement and measurement.get("provenance") in {"observed", "estimated"} and _is_number(measurement.get("value")):
+        if measurement and measurement.get("provenance") == "observed" and _is_number(measurement.get("value")):
             values.append(float(measurement["value"]))
     return values
 
@@ -373,6 +606,10 @@ def summarize_arm(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     costs = _measured_values(records, "cost")
     latencies = _measured_values(records, "latency")
     proxy_only = bool(records) and not costs and not latencies
+    estimated = any(
+        (_mapping(record.get(metric)) or {}).get("provenance") == "estimated"
+        for record in records for metric in ("cost", "latency")
+    )
     return {
         "run_count": len(records),
         "mean_quality": round(statistics.fmean(qualities), 6) if qualities else None,
@@ -380,7 +617,7 @@ def summarize_arm(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "median_latency": round(statistics.median(latencies), 6) if latencies else None,
         "pass_rate": round(sum(record.get("passed") is True for record in records) / len(records), 6) if records else 0.0,
         "proxy_only": proxy_only,
-        "cost_claim": "unavailable" if not costs else "measured",
+        "cost_claim": "measured" if costs else ("estimated-nonclaiming" if estimated else "unavailable"),
         "proxy_medians": {
             field: round(statistics.median([record.get("proxies", {}).get(field, 0) for record in records]), 6) if records else 0.0
             for field in ("model_calls", "spawn_count", "tool_calls", "question_count")
@@ -463,9 +700,18 @@ def _high_value_gate(
     time_margin: float,
     quality_noninferior: bool,
 ) -> dict[str, Any]:
-    selected = [pair for pair in pairs if pair[0].get("category") == "high-value-delegation"]
+    selected = [
+        pair for pair in pairs
+        if "high-value-delegation" in (_sequence(pair[0].get("evaluation_groups")) or ())
+        and "high-value-delegation" in (_sequence(pair[1].get("evaluation_groups")) or ())
+    ]
     if not selected:
-        return {"status": "not-applicable", "quality_gain": None, "critical_path_reduction": None}
+        return {
+            "status": "fail",
+            "quality_gain": None,
+            "critical_path_reduction": None,
+            "reason": "required bound high-value evaluation group evidence is absent",
+        }
     quality_gain = statistics.fmean(float(candidate["quality"]) - float(baseline["quality"]) for baseline, candidate in selected)
     baseline_paths = _measured_values([pair[0] for pair in selected], "critical_path")
     candidate_paths = _measured_values([pair[1] for pair in selected], "critical_path")
@@ -495,6 +741,21 @@ def _invalid_comparison(errors: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def _bundle_verified(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> bool:
+    arm = _arm(manifest, bundle.get("arm_id")) or {}
+    verification = _mapping(bundle.get("identity_verification")) or {}
+    surface = _mapping(bundle.get("surface_evidence")) or {}
+    return (
+        arm.get("identity_status") == "verified"
+        and verification.get("artifact") == "verified"
+        and verification.get("installed_read_back") == "verified"
+        and verification.get("run_identity") == "verified"
+        and verification.get("surface") == "verified"
+        and surface.get("status") == "verified"
+        and surface.get("surface_id") == manifest.get("surface")
+    )
+
+
 def compare_arms(
     baseline: Mapping[str, Any], candidate: Mapping[str, Any], manifest: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -502,13 +763,15 @@ def compare_arms(
 
     errors = [f"baseline: {error}" for error in validate_run_bundle(baseline, manifest)]
     errors.extend(f"candidate: {error}" for error in validate_run_bundle(candidate, manifest))
+    if errors:
+        return _invalid_comparison(errors)
     if baseline.get("arm_id") == candidate.get("arm_id"):
         errors.append("comparison requires distinct baseline and candidate arms")
     baseline_isolation = _mapping(baseline.get("isolation")) or {}
     candidate_isolation = _mapping(candidate.get("isolation")) or {}
-    for field in ("registry_fingerprint", "ledger_fingerprint"):
+    for field in ("task_fingerprint", "cache_fingerprint", "registry_fingerprint", "ledger_fingerprint", "environment_evidence_id"):
         if baseline_isolation.get(field) == candidate_isolation.get(field):
-            errors.append(f"cross-arm {field.replace('_fingerprint', '')} leakage detected")
+            errors.append(f"cross-arm {field.replace('_fingerprint', '').replace('_', ' ')} reuse or leakage detected")
     baseline_runs = list(_sequence(baseline.get("runs")) or ())
     candidate_runs = list(_sequence(candidate.get("runs")) or ())
     pairs = _paired_records(baseline_runs, candidate_runs)
@@ -584,7 +847,9 @@ def compare_arms(
         or behavioral_failure
         or unexplained_quality_drop
     )
-    if failure:
+    if not (_bundle_verified(baseline, manifest) and _bundle_verified(candidate, manifest)):
+        status = "unverified"
+    elif failure:
         status = "fail"
     elif quality_status == "inconclusive":
         status = "inconclusive"
@@ -639,8 +904,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result["status"] == "pass":
         print("BEHAVIORAL EVALUATION PASSED")
         return 0
-    if result["status"] == "inconclusive":
-        print("BEHAVIORAL EVALUATION INCONCLUSIVE")
+    if result["status"] in {"inconclusive", "unverified"}:
+        label = result["status"].upper()
+        print(f"BEHAVIORAL EVALUATION {label}: no comparative release claim is allowed")
         return 2
     print("BEHAVIORAL EVALUATION FAILED")
     return 1
