@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, TypeAlias
 
@@ -18,6 +18,30 @@ CAPABILITY_FALLBACKS = {
 API_SDK_SURFACES = frozenset({"openai-api-agents", "anthropic-api-agent-sdk"})
 EVIDENCE_SUPPORT_LEVELS = frozenset({"observed", "unsupported"})
 POLICY_SUPPORT_LEVELS = frozenset({"policy-only", "unsupported"})
+TRUSTED_LIVE_ADAPTERS = {
+    "codex-local": "codex-host",
+    "openai-api-agents": "openai-agents-adapter",
+    "claude-code-local": "claude-code-host",
+    "anthropic-api-agent-sdk": "anthropic-agent-adapter",
+}
+TRUSTED_ACCEPTANCE_ADAPTER = "capability-acceptance-harness"
+PAUSE_CANCEL_PRIMITIVES = {
+    "codex-local": frozenset({"interrupt_task"}),
+    "openai-api-agents": frozenset({"cancel_response"}),
+    "claude-code-local": frozenset({"stop_task"}),
+    "anthropic-api-agent-sdk": frozenset({"cancel_request"}),
+}
+ENFORCEMENT_STOP_PRIMITIVES = {
+    ("codex-local", "local"): frozenset({"codex_local_budget_gate"}),
+    ("codex-local", "provider"): frozenset({"codex_provider_stop"}),
+    ("openai-api-agents", "local"): frozenset({"openai_local_budget_gate"}),
+    ("openai-api-agents", "provider"): frozenset({"openai_provider_limit"}),
+    ("claude-code-local", "local"): frozenset({"claude_local_budget_gate"}),
+    ("claude-code-local", "provider"): frozenset({"claude_provider_stop"}),
+    ("anthropic-api-agent-sdk", "local"): frozenset({"anthropic_local_budget_gate"}),
+    ("anthropic-api-agent-sdk", "provider"): frozenset({"anthropic_provider_limit"}),
+}
+_PROCESS_ADAPTER_ATTESTATION = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +129,161 @@ class TrustedCapabilityEvidence:
     executable_adapter: bool
     required_fallback: str
     proof: CapabilityProof
+    _attestation: object | None = field(default=None, repr=False, compare=False)
+
+
+_PROOF_TYPES = (
+    NativeResumeProof,
+    PauseCancelProof,
+    UsageCounterProof,
+    EnforcementProof,
+    PersistencePrivacyProof,
+    ParallelExecutionProof,
+    TracingProof,
+)
+
+
+def _is_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _proof_shape_error(proof: Any) -> str | None:
+    if not isinstance(proof, _PROOF_TYPES):
+        return "malformed proof: unrecognized proof type"
+    for field_name in ("surface_id", "verified_version"):
+        if not _is_text(getattr(proof, field_name)):
+            return f"malformed proof: {field_name} must be a non-empty string"
+    if isinstance(proof, NativeResumeProof):
+        fields = ("native_handle_ref", "continuity_evidence_ref")
+    elif isinstance(proof, PauseCancelProof):
+        fields = ("stop_primitive",)
+    elif isinstance(proof, UsageCounterProof):
+        fields = ("measurement_surface", "counter_id")
+        if type(proof.observed) is not bool:
+            return "malformed proof: observed must be a boolean"
+    elif isinstance(proof, EnforcementProof):
+        fields = ("primitive_scope", "stop_primitive")
+        if not isinstance(proof.usage_counter, UsageCounterProof):
+            return "malformed proof: usage_counter must be UsageCounterProof"
+        nested_error = _proof_shape_error(proof.usage_counter)
+        if nested_error:
+            return nested_error
+    elif isinstance(proof, PersistencePrivacyProof):
+        fields = ("storage_boundary", "privacy_control_ref")
+    elif isinstance(proof, ParallelExecutionProof):
+        fields = ("slot_detector_ref",)
+        if (
+            not isinstance(proof.detected_max, int)
+            or isinstance(proof.detected_max, bool)
+        ):
+            return "malformed proof: detected_max must be an integer"
+    else:
+        fields = ("trace_source",)
+    for field_name in fields:
+        if not _is_text(getattr(proof, field_name)):
+            return f"malformed proof: {field_name} must be a non-empty string"
+    return None
+
+
+def _evidence_shape_error(evidence: TrustedCapabilityEvidence) -> str | None:
+    for field_name in (
+        "surface_id",
+        "capability",
+        "support_level",
+        "detector_id",
+        "evidence_ref",
+        "verified_version",
+        "provenance",
+        "detector_status",
+        "required_fallback",
+    ):
+        if not _is_text(getattr(evidence, field_name)):
+            return f"malformed evidence: {field_name} must be a non-empty string"
+    for field_name in ("verified_at", "expires_at"):
+        value = getattr(evidence, field_name)
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            return f"malformed evidence: {field_name} must be a timezone-aware datetime"
+    if type(evidence.conflicting) is not bool:
+        return "malformed evidence: conflicting must be a boolean"
+    if type(evidence.executable_adapter) is not bool:
+        return "malformed evidence: executable_adapter must be a boolean"
+    return _proof_shape_error(evidence.proof)
+
+
+def issue_adapter_evidence(
+    *,
+    surface_id: str,
+    capability: str,
+    support_level: str,
+    adapter_id: str,
+    evidence_id: str,
+    verified_version: str,
+    verified_at: datetime,
+    expires_at: datetime,
+    provenance: str,
+    required_fallback: str,
+    proof: CapabilityProof,
+) -> TrustedCapabilityEvidence:
+    """Issue process-local evidence from a registered adapter identity.
+
+    The identity token is intentionally not serializable. This is a process
+    boundary, not a cryptographic signature or protection from hostile Python
+    code running inside this module's process.
+    """
+
+    if not _is_text(surface_id) or surface_id not in TRUSTED_LIVE_ADAPTERS:
+        raise ValueError("surface_id is not registered for capability evidence")
+    if not _is_text(capability) or capability not in CAPABILITY_FALLBACKS:
+        raise ValueError("capability is not registered")
+    if not _is_text(provenance) or provenance not in {"live_detection", "acceptance_run"}:
+        raise ValueError("provenance must be live_detection or acceptance_run")
+    expected_adapter = (
+        TRUSTED_LIVE_ADAPTERS[surface_id]
+        if provenance == "live_detection"
+        else TRUSTED_ACCEPTANCE_ADAPTER
+    )
+    if not _is_text(adapter_id) or adapter_id != expected_adapter:
+        raise ValueError("adapter_id is not registered for this surface and provenance")
+    if not _is_text(evidence_id) or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for character in evidence_id):
+        raise ValueError("evidence_id must be a non-empty adapter identifier")
+    if not _is_text(support_level) or support_level not in EVIDENCE_SUPPORT_LEVELS:
+        raise ValueError("support_level must be observed or unsupported")
+    if not _is_text(verified_version) or verified_version == "unavailable":
+        raise ValueError("verified_version must be an exact runtime version")
+    if required_fallback != CAPABILITY_FALLBACKS[capability]:
+        raise ValueError("required_fallback does not match capability")
+    shape_error = _proof_shape_error(proof)
+    if shape_error:
+        raise ValueError(shape_error)
+    evidence = TrustedCapabilityEvidence(
+        surface_id=surface_id,
+        capability=capability,
+        support_level=support_level,
+        detector_id=(
+            f"adapter:{adapter_id}"
+            if provenance == "live_detection"
+            else f"acceptance:{adapter_id}"
+        ),
+        evidence_ref=(
+            f"live:{evidence_id}"
+            if provenance == "live_detection"
+            else f"acceptance:{evidence_id}"
+        ),
+        verified_version=verified_version,
+        verified_at=verified_at,
+        expires_at=expires_at,
+        provenance=provenance,
+        detector_status="success",
+        conflicting=False,
+        executable_adapter=True,
+        required_fallback=required_fallback,
+        proof=proof,
+        _attestation=_PROCESS_ADAPTER_ATTESTATION,
+    )
+    evidence_error = _evidence_shape_error(evidence)
+    if evidence_error:
+        raise ValueError(evidence_error)
+    return evidence
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -132,29 +311,37 @@ def _non_user_reference(value: Any, prefix: str | None = None) -> bool:
 def _policy_errors(surface: str, policy: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
     capability = policy.get("capability")
-    if not isinstance(surface, str) or not surface.strip():
+    if not _is_text(surface):
         errors.append("surface must be a non-empty string")
-    if policy.get("surface_id") != surface:
+    policy_surface = policy.get("surface_id")
+    if not _is_text(policy_surface):
+        errors.append("policy surface_id must be a non-empty string")
+    elif policy_surface != surface:
         errors.append("policy surface_id must match the active surface")
-    if capability not in CAPABILITY_FALLBACKS:
+    if not _is_text(capability):
+        errors.append("policy capability must be a non-empty string")
+    elif capability not in CAPABILITY_FALLBACKS:
         errors.append("policy capability is unsupported")
     for field in ("detector", "evidence_ref", "verified_version"):
-        if not isinstance(policy.get(field), str) or not policy[field].strip():
+        if not _is_text(policy.get(field)):
             errors.append(f"policy {field} must be a non-empty string")
-    if policy.get("support_level") not in POLICY_SUPPORT_LEVELS:
+    support_level = policy.get("support_level")
+    if not _is_text(support_level) or support_level not in POLICY_SUPPORT_LEVELS:
         errors.append("policy support_level must be policy-only or unsupported")
-    if policy.get("provenance") != "policy_declaration":
+    provenance = policy.get("provenance")
+    if not _is_text(provenance) or provenance != "policy_declaration":
         errors.append("policy provenance must be policy_declaration")
-    if capability in CAPABILITY_FALLBACKS:
-        if policy.get("required_fallback") != CAPABILITY_FALLBACKS[capability]:
+    if _is_text(capability) and capability in CAPABILITY_FALLBACKS:
+        fallback = policy.get("required_fallback")
+        if not _is_text(fallback) or fallback != CAPABILITY_FALLBACKS[capability]:
             errors.append("policy required_fallback does not match the capability contract")
-    needs_measurement = capability in {
+    needs_measurement = _is_text(capability) and capability in {
         "usage_measurement",
         "local_enforcement",
         "provider_enforcement",
     }
     measurement_surface = policy.get("measurement_surface")
-    if needs_measurement and (not isinstance(measurement_surface, str) or not measurement_surface.strip()):
+    if needs_measurement and not _is_text(measurement_surface):
         errors.append("policy measurement_surface is required for measured capabilities")
     if not needs_measurement and measurement_surface is not None:
         errors.append("policy measurement_surface must be null for unmeasured capabilities")
@@ -241,8 +428,9 @@ def _proof_error(evidence: TrustedCapabilityEvidence, policy: Mapping[str, Any])
         mismatch = _base_proof_error(proof, surface, version, "pause/cancel")
         if mismatch:
             return mismatch
-        if not _non_user_reference(proof.stop_primitive):
-            return "pause/cancel requires an adapter stop primitive"
+        allowed = PAUSE_CANCEL_PRIMITIVES.get(surface, frozenset())
+        if proof.stop_primitive not in allowed:
+            return "pause/cancel stop primitive is not allowlisted for this surface"
         return None
 
     if capability == "usage_measurement":
@@ -257,8 +445,9 @@ def _proof_error(evidence: TrustedCapabilityEvidence, policy: Mapping[str, Any])
         if mismatch:
             return mismatch
         required_scope = capability.removesuffix("_enforcement")
-        if proof.primitive_scope != required_scope or not _non_user_reference(proof.stop_primitive):
-            return "enforcement proof lacks the matching local/provider stop primitive"
+        allowed = ENFORCEMENT_STOP_PRIMITIVES.get((surface, required_scope), frozenset())
+        if proof.primitive_scope != required_scope or proof.stop_primitive not in allowed:
+            return "enforcement stop primitive is not allowlisted for this surface and scope"
         usage_error = _usage_error(
             proof.usage_counter,
             surface,
@@ -316,6 +505,11 @@ def _evidence_error(
     expected_provenance: str,
     now: datetime,
 ) -> str | None:
+    if evidence._attestation is not _PROCESS_ADAPTER_ATTESTATION:
+        return "adapter attestation is absent or forged"
+    shape_error = _evidence_shape_error(evidence)
+    if shape_error:
+        return shape_error
     if evidence.surface_id != surface:
         return "wrong surface in capability evidence"
     if policy["verified_version"] == "unavailable":
@@ -430,7 +624,7 @@ def resolve_capability(
                 surface,
                 policy,
                 "live_detection",
-                "API/SDK support requires trusted executable live adapter evidence",
+                "API/SDK support requires trusted executable live adapter evidence; adapter attestation unavailable",
             )
         live_error = _evidence_error(live, surface, policy, "live_detection", checked_at)
         if live_error:
@@ -440,7 +634,7 @@ def resolve_capability(
                 surface,
                 policy,
                 "acceptance_run",
-                "API/SDK support requires a current matching acceptance run",
+                "API/SDK support requires a current matching acceptance run; adapter attestation unavailable",
             )
         acceptance_error = _evidence_error(
             acceptance,
@@ -474,7 +668,7 @@ def resolve_capability(
                 surface,
                 policy,
                 "live_detection",
-                "live claim is not closed trusted adapter evidence",
+                "live claim is not closed trusted adapter evidence; adapter attestation unavailable",
             )
         error = _evidence_error(live, surface, policy, "live_detection", checked_at)
         if error:
@@ -487,7 +681,7 @@ def resolve_capability(
                 surface,
                 policy,
                 "acceptance_run",
-                "acceptance claim is not closed trusted adapter evidence",
+                "acceptance claim is not closed trusted adapter evidence; adapter attestation unavailable",
             )
         error = _evidence_error(acceptance, surface, policy, "acceptance_run", checked_at)
         if error:

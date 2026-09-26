@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unittest
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,6 +16,7 @@ from scripts.capability_matrix import (
     TracingProof,
     TrustedCapabilityEvidence,
     UsageCounterProof,
+    issue_adapter_evidence,
     resolve_capability,
 )
 
@@ -43,6 +44,28 @@ DISPLAY_CAPABILITIES = {
     "tracing": "tracing",
 }
 API_SURFACES = ("openai-api-agents", "anthropic-api-agent-sdk")
+ADAPTER_IDS = {
+    "codex-local": "codex-host",
+    "openai-api-agents": "openai-agents-adapter",
+    "claude-code-local": "claude-code-host",
+    "anthropic-api-agent-sdk": "anthropic-agent-adapter",
+}
+PAUSE_PRIMITIVES = {
+    "codex-local": "interrupt_task",
+    "openai-api-agents": "cancel_response",
+    "claude-code-local": "stop_task",
+    "anthropic-api-agent-sdk": "cancel_request",
+}
+ENFORCEMENT_PRIMITIVES = {
+    ("codex-local", "local"): "codex_local_budget_gate",
+    ("codex-local", "provider"): "codex_provider_stop",
+    ("openai-api-agents", "local"): "openai_local_budget_gate",
+    ("openai-api-agents", "provider"): "openai_provider_limit",
+    ("claude-code-local", "local"): "claude_local_budget_gate",
+    ("claude-code-local", "provider"): "claude_provider_stop",
+    ("anthropic-api-agent-sdk", "local"): "anthropic_local_budget_gate",
+    ("anthropic-api-agent-sdk", "provider"): "anthropic_provider_limit",
+}
 
 
 def policy(
@@ -89,7 +112,7 @@ def proof_for(capability: str, surface: str, version: str):
     if capability == "native_resume":
         return NativeResumeProof(surface, version, "handle:task-17", "continuity:checkpoint-17")
     if capability == "pause_cancel":
-        return PauseCancelProof(surface, version, "interrupt-task")
+        return PauseCancelProof(surface, version, PAUSE_PRIMITIVES[surface])
     if capability == "usage_measurement":
         return usage_counter(surface, version)
     if capability in {"local_enforcement", "provider_enforcement"}:
@@ -99,7 +122,7 @@ def proof_for(capability: str, surface: str, version: str):
             version,
             usage_counter(surface, version),
             scope,
-            f"{scope}-stop-primitive",
+            ENFORCEMENT_PRIMITIVES[(surface, scope)],
         )
     if capability == "persistence_privacy":
         return PersistencePrivacyProof(surface, version, "workspace", "privacy:policy-17")
@@ -118,26 +141,22 @@ def evidence(
     provenance: str = "live_detection",
     **overrides,
 ) -> TrustedCapabilityEvidence:
-    values = {
-        "surface_id": surface,
-        "capability": capability,
-        "support_level": "observed",
-        "detector_id": (
-            "adapter:codex-host" if provenance == "live_detection" else "acceptance:capability-harness"
+    issued = issue_adapter_evidence(
+        surface_id=surface,
+        capability=capability,
+        support_level="observed",
+        adapter_id=(
+            ADAPTER_IDS[surface] if provenance == "live_detection" else "capability-acceptance-harness"
         ),
-        "evidence_ref": "live:run-17" if provenance == "live_detection" else "acceptance:run-11",
-        "verified_version": version,
-        "verified_at": NOW - timedelta(minutes=30),
-        "expires_at": NOW + timedelta(hours=1),
-        "provenance": provenance,
-        "detector_status": "success",
-        "conflicting": False,
-        "executable_adapter": True,
-        "required_fallback": CAPABILITIES[capability],
-        "proof": proof_for(capability, surface, version),
-    }
-    values.update(overrides)
-    return TrustedCapabilityEvidence(**values)
+        evidence_id="run-17" if provenance == "live_detection" else "run-11",
+        verified_version=version,
+        verified_at=NOW - timedelta(minutes=30),
+        expires_at=NOW + timedelta(hours=1),
+        provenance=provenance,
+        required_fallback=CAPABILITIES[capability],
+        proof=proof_for(capability, surface, version),
+    )
+    return replace(issued, **overrides)
 
 
 class CapabilityTrustBoundaryTests(unittest.TestCase):
@@ -175,6 +194,83 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
 
         self.assertEqual(result["support_level"], "unknown")
         self.assertIn("trusted adapter evidence", result["reason"])
+
+    def test_ordinary_construction_forged_attestation_and_serialization_cannot_recreate_trust(self):
+        issued = evidence()
+        fields = {
+            "surface_id": issued.surface_id,
+            "capability": issued.capability,
+            "support_level": issued.support_level,
+            "detector_id": issued.detector_id,
+            "evidence_ref": issued.evidence_ref,
+            "verified_version": issued.verified_version,
+            "verified_at": issued.verified_at,
+            "expires_at": issued.expires_at,
+            "provenance": issued.provenance,
+            "detector_status": issued.detector_status,
+            "conflicting": issued.conflicting,
+            "executable_adapter": issued.executable_adapter,
+            "required_fallback": issued.required_fallback,
+            "proof": issued.proof,
+        }
+        ordinary = TrustedCapabilityEvidence(**fields)
+        forged = replace(issued, _attestation=object())
+        serialized = asdict(issued)
+
+        for claim in [ordinary, forged, serialized]:
+            with self.subTest(claim=type(claim).__name__):
+                result = resolve_capability("codex-local", claim, None, policy(), NOW)
+                self.assertEqual(result["support_level"], "unknown")
+                self.assertIn("attestation", result["reason"])
+
+        legitimate = resolve_capability("codex-local", issued, None, policy(), NOW)
+        self.assertEqual(legitimate["support_level"], "observed")
+
+    def test_malformed_evidence_fields_resolve_unknown_without_exceptions(self):
+        malformed = {
+            "surface_id": [],
+            "capability": {},
+            "support_level": [],
+            "detector_id": True,
+            "evidence_ref": [],
+            "verified_version": {},
+            "verified_at": "2026-09-27T11:30:00Z",
+            "expires_at": [],
+            "provenance": {},
+            "detector_status": [],
+            "conflicting": "false",
+            "executable_adapter": 1,
+            "required_fallback": [],
+            "proof": {},
+        }
+        for field, value in malformed.items():
+            with self.subTest(field=field):
+                result = resolve_capability(
+                    "codex-local", replace(evidence(), **{field: value}), None, policy(), NOW
+                )
+                self.assertEqual(result["support_level"], "unknown")
+                self.assertIn("malformed", result["reason"])
+
+    def test_malformed_policy_fields_raise_controlled_value_error(self):
+        malformed = {
+            "surface_id": [],
+            "capability": [],
+            "support_level": {},
+            "detector": True,
+            "evidence_ref": [],
+            "verified_version": {},
+            "verified_at": [],
+            "expires_at": True,
+            "provenance": {},
+            "required_fallback": [],
+            "measurement_surface": [],
+        }
+        for field, value in malformed.items():
+            with self.subTest(field=field):
+                record = policy()
+                record[field] = value
+                with self.assertRaisesRegex(ValueError, "Invalid capability policy"):
+                    resolve_capability("codex-local", None, None, record, NOW)
 
     def test_user_namespaces_are_rejected_even_on_typed_evidence(self):
         for field, value in [("detector_id", "user:claim"), ("evidence_ref", "user:claim")]:
@@ -257,6 +353,83 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
                     self.assertEqual(result["support_level"], "unknown")
                     self.assertIn("enforcement", result["reason"])
 
+    def test_stop_primitives_are_allowlisted_by_surface_capability_and_scope(self):
+        surfaces = (
+            "codex-local",
+            "openai-api-agents",
+            "claude-code-local",
+            "anthropic-api-agent-sdk",
+        )
+        for surface in surfaces:
+            version = "host/1.2.3"
+            for capability in ("pause_cancel", "local_enforcement", "provider_enforcement"):
+                selected_policy = policy(surface=surface, version=version, capability=capability)
+                live_record = evidence(surface=surface, version=version, capability=capability)
+                bad_proof = replace(live_record.proof, stop_primitive="arbitrary_stop")
+                bad_live = replace(live_record, proof=bad_proof)
+                acceptance_record = (
+                    evidence(
+                        surface=surface,
+                        version=version,
+                        capability=capability,
+                        provenance="acceptance_run",
+                    )
+                    if surface in API_SURFACES
+                    else None
+                )
+                with self.subTest(surface=surface, capability=capability):
+                    result = resolve_capability(
+                        surface, bad_live, acceptance_record, selected_policy, NOW
+                    )
+                    self.assertEqual(result["support_level"], "unknown")
+                    self.assertIn("allowlisted", result["reason"])
+
+    def test_every_proof_dataclass_rejects_wrong_runtime_field_types(self):
+        cases = [
+            ("native_resume", "surface_id", []),
+            ("native_resume", "verified_version", {}),
+            ("native_resume", "native_handle_ref", True),
+            ("native_resume", "continuity_evidence_ref", []),
+            ("pause_cancel", "surface_id", {}),
+            ("pause_cancel", "verified_version", []),
+            ("pause_cancel", "stop_primitive", True),
+            ("usage_measurement", "surface_id", []),
+            ("usage_measurement", "verified_version", {}),
+            ("usage_measurement", "measurement_surface", True),
+            ("usage_measurement", "counter_id", []),
+            ("usage_measurement", "observed", "true"),
+            ("local_enforcement", "surface_id", []),
+            ("local_enforcement", "verified_version", {}),
+            ("local_enforcement", "usage_counter", []),
+            ("local_enforcement", "primitive_scope", True),
+            ("local_enforcement", "stop_primitive", []),
+            ("persistence_privacy", "surface_id", []),
+            ("persistence_privacy", "verified_version", {}),
+            ("persistence_privacy", "storage_boundary", True),
+            ("persistence_privacy", "privacy_control_ref", []),
+            ("parallel_execution", "surface_id", []),
+            ("parallel_execution", "verified_version", {}),
+            ("parallel_execution", "slot_detector_ref", True),
+            ("parallel_execution", "detected_max", []),
+            ("parallel_execution", "detected_max", True),
+            ("tracing", "surface_id", []),
+            ("tracing", "verified_version", {}),
+            ("tracing", "trace_source", True),
+        ]
+        for capability, field, value in cases:
+            with self.subTest(capability=capability, field=field):
+                valid = evidence(capability=capability)
+                bad_proof = replace(valid.proof, **{field: value})
+                result = resolve_capability(
+                    "codex-local",
+                    replace(valid, proof=bad_proof),
+                    None,
+                    policy(capability=capability),
+                    NOW,
+                )
+                self.assertEqual(result["support_level"], "unknown")
+                self.assertIn("malformed", result["reason"])
+
     def test_native_resume_requires_native_handle_and_continuity_proof(self):
         base = proof_for("native_resume", "codex-local", "codex-host/1.2.3")
         for proof in [
@@ -271,7 +444,10 @@ class CapabilityTrustBoundaryTests(unittest.TestCase):
                     "codex-local", evidence(proof=proof), None, policy(), NOW
                 )
                 self.assertEqual(result["support_level"], "unknown")
-                self.assertIn("resume", result["reason"])
+                self.assertTrue(
+                    "resume" in result["reason"] or "malformed proof" in result["reason"],
+                    result,
+                )
 
 
 class CapabilityPrecedenceTests(unittest.TestCase):
@@ -492,6 +668,9 @@ class PlatformMatrixDocumentationTests(unittest.TestCase):
                 "product subscription",
                 "api billing",
                 "both executable live adapter evidence and a current matching acceptance run",
+                "process-local attestation",
+                "not a cryptographic signature",
+                "serialization cannot recreate",
             ]:
                 self.assertIn(phrase, text)
 

@@ -6,6 +6,8 @@ Use this module only after the router needs a host capability. Repository state 
 
 Resolve one capability with `scripts/capability_matrix.py`. Runtime claims must arrive as the closed `TrustedCapabilityEvidence` adapter type with the capability-specific proof type. Generic mappings, user-authored claims, and arbitrary detector or evidence namespaces resolve to `unknown`.
 
+The adapter factory adds a process-local attestation that ordinary construction and serialization cannot recreate. It is an in-process capability boundary, not a cryptographic signature and not protection against hostile code already executing inside the resolver module. Prefixes such as `adapter:` or `live:` are metadata only; they never establish trust by themselves.
+
 For local surfaces, matching live detection for the exact surface and version outranks an unexpired acceptance run, which outranks this static policy declaration. Anthropic API/Agent SDK support becomes `observed` only with both executable live adapter evidence and a current matching acceptance run. Either item alone, or disagreement between them, fails closed.
 
 Missing provenance, wrong surface, wrong version, expired evidence, conflicting observations, or detector failure resolves to `unknown`. A present but invalid higher-priority record cannot be hidden by lower-priority evidence. `unknown` uses the canonical Fallback token, the same safe route used for unsupported behavior. Report the reason and route; do not rewrite this matrix silently.
