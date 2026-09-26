@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/config/team-registry.schema.json",
+  "title": "Optimal Challenge reconstructable team registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "snapshot_version", "transaction_version", "transaction_id", "run_id", "coordinator_id", "status", "evidence", "teammates", "assignments", "quarantine"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "snapshot_version": {"type": "integer", "minimum": 0},
+    "transaction_version": {"type": "integer", "minimum": 0},
+    "transaction_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "coordinator_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["active", "degraded", "blocked"]},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/evidence"}
+    },
+    "teammates": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/teammate"}
+    },
+    "assignments": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/assignment"}
+    },
+    "quarantine": {"type": "array", "items": {"$ref": "#/$defs/quarantine"}}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "evidenceRefs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "kind", "outcome"],
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/identifier"},
+        "kind": {"enum": ["review", "source", "test", "task", "return", "reservation", "terminal", "decision"]},
+        "outcome": {"enum": ["accepted", "rejected", "verified", "failed", "unknown"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "version": {"type": "integer", "minimum": 0}
+      }
+    },
+    "nativeHandle": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["provider", "handle", "expires_at", "evidence_ref"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "handle": {"type": "string", "minLength": 1},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "evidence_ref": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["successful_reviews", "failed_reviews", "evidence_refs"],
+      "properties": {
+        "successful_reviews": {"type": "integer", "minimum": 0},
+        "failed_reviews": {"type": "integer", "minimum": 0},
+        "evidence_refs": {"$ref": "#/$defs/evidenceRefs"}
+      }
+    },
+    "teammate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_teammate_id", "role", "capability_class", "continuity_mode", "native_handle", "working_set_evidence_refs", "trust", "active_assignment_ids"],
+      "properties": {
+        "logical_teammate_id": {"$ref": "#/$defs/identifier"},
+        "role": {"type": "string", "minLength": 1},
+        "capability_class": {"enum": ["economy", "standard", "reasoning", "frontier"]},
+        "continuity_mode": {"enum": ["resume", "rehydrate", "fresh"]},
+        "native_handle": {"$ref": "#/$defs/nativeHandle"},
+        "working_set_evidence_refs": {"$ref": "#/$defs/evidenceRefs"},
+        "trust": {"$ref": "#/$defs/trust"},
+        "active_assignment_ids": {"$ref": "#/$defs/evidenceRefs"}
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assignment_id", "logical_teammate_id", "reservation_id", "capability_class", "state", "evidence_refs"],
+      "properties": {
+        "assignment_id": {"$ref": "#/$defs/identifier"},
+        "logical_teammate_id": {"$ref": "#/$defs/identifier"},
+        "reservation_id": {"$ref": "#/$defs/identifier"},
+        "capability_class": {"enum": ["economy", "standard", "reasoning", "frontier"]},
+        "state": {"enum": ["reserved", "running", "complete", "failed", "cancelled", "unknown"]},
+        "evidence_refs": {"$ref": "#/$defs/evidenceRefs"}
+      }
+    },
+    "quarantine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "source", "snapshot_version"],
+      "properties": {
+        "reason": {"type": "string", "minLength": 1},
+        "source": {"enum": ["registry", "ledger", "cross-record", "native-handle"]},
+        "snapshot_version": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

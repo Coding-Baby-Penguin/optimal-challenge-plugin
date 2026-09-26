@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "snapshot_version": 1,
+  "transaction_version": 1,
+  "transaction_id": "tx-1",
+  "run_id": "run-1",
+  "coordinator_id": "coordinator-1",
+  "status": "active",
+  "evidence": {
+    "review-1": {"evidence_id": "review-1", "kind": "review", "outcome": "accepted"},
+    "work-1": {"evidence_id": "work-1", "kind": "source", "outcome": "verified"}
+  },
+  "teammates": {
+    "worker-1": {
+      "logical_teammate_id": "worker-1",
+      "role": "implementer",
+      "capability_class": "standard",
+      "continuity_mode": "fresh",
+      "native_handle": null,
+      "working_set_evidence_refs": ["work-1"],
+      "trust": {"successful_reviews": 1, "failed_reviews": 0, "evidence_refs": ["review-1"]},
+      "active_assignment_ids": ["assignment-1"]
+    }
+  },
+  "assignments": {
+    "assignment-1": {
+      "assignment_id": "assignment-1",
+      "logical_teammate_id": "worker-1",
+      "reservation_id": "reservation-1",
+      "capability_class": "standard",
+      "state": "running",
+      "evidence_refs": ["work-1"]
+    }
+  },
+  "quarantine": []
+}
