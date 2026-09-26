@@ -15,9 +15,40 @@ premise:
   settled: false
 profile: balanced
 capability_class: standard
+routing:
+  invocation_mode: auto
+  exact_specialists: null
+  selected_route: ""
+  delegation:
+    benefits:
+      parallel: 0
+      independence: 0
+      context: 0
+      quality: 0
+    costs:
+      setup: 0
+      transfer: 0
+      merge: 0
+      review_rework: 0
+    evidence_ids: []
+    provenance:
+      benefits.parallel: unknown
+      benefits.independence: unknown
+      benefits.context: unknown
+      benefits.quality: unknown
+      costs.setup: unknown
+      costs.transfer: unknown
+      costs.merge: unknown
+      costs.review_rework: unknown
+    required_margin: 1
+    decision_reason: ""
 allocation:
-  unit: ""
+  unit: null
   reservation_id: ""
+  measurement: unavailable
+  enforcement: advisory
+  measurement_source: null
+  evidence_refs: []
   worker: 0
   tool: 0
   retry: 0
@@ -44,10 +75,17 @@ escalation:
   evidence_refs: []
   decision_id: ""
 return_contract:
+  - goal_id
+  - assignment_id
+  - logical_teammate_id
   - status
   - changed_artifacts
   - verification
+  - evidence_refs
+  - decisions
   - decision_delta
+  - assumptions
+  - risks
   - concerns
   - needs
   - usage

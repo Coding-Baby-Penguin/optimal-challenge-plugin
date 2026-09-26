@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
+
+import yaml
+from jsonschema import Draft202012Validator
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,35 +19,44 @@ TASK_FILES = {
     "QUESTION-BUNDLE.md",
     "PROJECT-STATE.md",
 }
-
-
-def yaml_paths(text: str) -> set[str]:
-    """Return indentation-based mapping paths for the simple capsule YAML."""
-    paths: set[str] = set()
-    parents: list[tuple[int, str]] = []
-    for raw_line in text.splitlines():
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        match = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_-]*):", raw_line)
-        if not match:
-            continue
-        indent = len(match.group(1))
-        key = match.group(2)
-        while parents and parents[-1][0] >= indent:
-            parents.pop()
-        path = ".".join([parent[1] for parent in parents] + [key])
-        paths.add(path)
-        parents.append((indent, key))
-    return paths
+STATUS_VALUES = {
+    "NEEDS_CAPABILITY",
+    "NEEDS_DECISION",
+    "complete",
+    "partial",
+    "blocked",
+    "degraded",
+    "failed",
+}
+MEASUREMENT_VALUES = {"unavailable", "estimated", "observed"}
+ENFORCEMENT_VALUES = {"advisory", "local_enforced", "provider_enforced"}
+BUDGET_UNITS = {None, "credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"}
+BENEFIT_KEYS = {"parallel", "independence", "context", "quality"}
+COST_KEYS = {"setup", "transfer", "merge", "review_rework"}
+FACTOR_PROVENANCE_KEYS = {
+    *(f"benefits.{key}" for key in BENEFIT_KEYS),
+    *(f"costs.{key}" for key in COST_KEYS),
+}
 
 
 class TeamTemplateContracts(unittest.TestCase):
     def read(self, name: str) -> str:
         return (TEMPLATES / name).read_text(encoding="utf-8")
 
-    def assert_yaml_paths(self, name: str, expected: set[str]) -> None:
-        actual = yaml_paths(self.read(name))
-        self.assertTrue(expected <= actual, f"{name} missing: {sorted(expected - actual)}")
+    def load_yaml(self, name: str) -> dict:
+        documents = list(yaml.safe_load_all(self.read(name)))
+        self.assertEqual(len(documents), 1, name)
+        self.assertIsInstance(documents[0], dict, name)
+        return documents[0]
+
+    def test_development_dependencies_pin_real_yaml_and_schema_parsers(self):
+        requirements = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+        self.assertIn("jsonschema==4.25.1", requirements)
+        self.assertIn("PyYAML==6.0.2", requirements)
+        docs = (ROOT / "config" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Python 3.12", docs)
+        self.assertIn("PyYAML", docs)
+        self.assertNotIn("C:\\Users\\", docs)
 
     def test_all_team_templates_exist_and_stay_below_ten_kibibytes(self):
         for name in TASK_FILES:
@@ -72,97 +85,106 @@ class TeamTemplateContracts(unittest.TestCase):
         ]:
             self.assertIn(field, text)
 
-    def test_teammate_capsule_covers_identity_continuity_evidence_and_trust(self):
-        self.assert_yaml_paths(
-            "TEAMMATE-CAPSULE.yaml",
-            {
-                "logical_teammate_id",
-                "role",
-                "capability_class",
-                "continuity_mode",
-                "native_handle.provider",
-                "native_handle.handle",
-                "native_handle.expires_at",
-                "native_handle.evidence_ref",
-                "working_set_evidence_refs",
-                "trust.successful_reviews",
-                "trust.failed_reviews",
-                "trust.evidence_refs",
-                "active_assignment_ids",
-            },
-        )
+    def test_unavailable_native_handle_is_null_and_example_is_documented(self):
+        teammate = self.load_yaml("TEAMMATE-CAPSULE.yaml")
+        self.assertIsNone(teammate["native_handle"])
+        text = self.read("TEAMMATE-CAPSULE.yaml")
+        self.assertIn("When available, replace null with", text)
+        for field in ["provider:", "handle:", "expires_at:", "evidence_ref:"]:
+            self.assertIn(field, text)
 
-    def test_task_capsule_additively_covers_route_allocation_and_authority(self):
-        self.assertIn("return_status: NEEDS_CAPABILITY", self.read("task-capsule.yaml"))
-        self.assert_yaml_paths(
-            "task-capsule.yaml",
-            {
-                "goal_id",
-                "assignment_id",
-                "logical_teammate_id",
-                "task.outcome",
-                "task.done_when",
-                "premise.decision_ids",
-                "premise.evidence_refs",
-                "premise.settled",
-                "profile",
-                "capability_class",
-                "allocation.unit",
-                "allocation.reservation_id",
-                "allocation.worker",
-                "allocation.tool",
-                "allocation.retry",
-                "allocation.review",
-                "retry_allowance",
-                "authority.may_ask_user",
-                "authority.may_expand_scope",
-                "authority.may_spawn_agents",
-                "authority.may_change_profile",
-                "authority.may_acquire_permissions",
-                "capability_lease.allowed",
-                "capability_lease.conditional",
-                "capability_lease.forbidden",
-                "escalation.status",
-                "escalation.reason",
-                "escalation.impact",
-                "escalation.evidence_refs",
-                "escalation.decision_id",
-                "return_contract",
-            },
-        )
+    def test_minimally_populated_teammate_matches_registry_schema(self):
+        teammate = self.load_yaml("TEAMMATE-CAPSULE.yaml")
+        teammate["logical_teammate_id"] = "teammate-1"
+        teammate["role"] = "implementer"
+        registry = {
+            "schema_version": 1,
+            "snapshot_version": 0,
+            "transaction_version": 0,
+            "transaction_id": "transaction-0",
+            "run_id": "run-1",
+            "coordinator_id": "coordinator-1",
+            "status": "active",
+            "evidence": {},
+            "teammates": {"teammate-1": teammate},
+            "assignments": {},
+            "quarantine": [],
+        }
+        schema = json.loads((ROOT / "config" / "team-registry.schema.json").read_text(encoding="utf-8"))
+        Draft202012Validator(schema).validate(registry)
 
-    def test_return_capsule_covers_delta_evidence_needs_and_usage(self):
-        self.assert_yaml_paths(
-            "RETURN-CAPSULE.yaml",
-            {
-                "assignment_id",
-                "logical_teammate_id",
-                "status",
-                "changed_artifacts",
-                "verification",
-                "evidence_refs",
-                "decisions",
-                "assumptions",
-                "risks",
-                "needs.capabilities",
-                "needs.decisions",
-                "usage.unit",
-                "usage.measurement",
-                "usage.amount",
-                "usage.source",
-            },
-        )
-        text = self.read("RETURN-CAPSULE.yaml")
-        for status in [
-            "NEEDS_CAPABILITY",
-            "NEEDS_DECISION",
-            "complete",
-            "partial",
-            "blocked",
-            "degraded",
-            "failed",
+    def test_task_capsule_has_native_typed_route_decision_contract(self):
+        task = self.load_yaml("task-capsule.yaml")
+        routing = task["routing"]
+        self.assertIn(routing["invocation_mode"], {"inline-only", "auto", "team-requested"})
+        self.assertIsNone(routing["exact_specialists"])
+        self.assertIsInstance(routing["selected_route"], str)
+
+        delegation = routing["delegation"]
+        self.assertEqual(set(delegation["benefits"]), BENEFIT_KEYS)
+        self.assertEqual(set(delegation["costs"]), COST_KEYS)
+        for value in [*delegation["benefits"].values(), *delegation["costs"].values()]:
+            self.assertIs(type(value), int)
+            self.assertIn(value, range(4))
+        self.assertEqual(set(delegation["provenance"]), FACTOR_PROVENANCE_KEYS)
+        self.assertTrue(all(value in {"observed", "estimated", "unknown"} for value in delegation["provenance"].values()))
+        self.assertIsInstance(delegation["evidence_ids"], list)
+        self.assertIs(type(delegation["required_margin"]), int)
+        self.assertGreaterEqual(delegation["required_margin"], 1)
+        self.assertIsInstance(delegation["decision_reason"], str)
+
+    def test_task_allocation_uses_budget_enums_nulls_and_native_numbers(self):
+        allocation = self.load_yaml("task-capsule.yaml")["allocation"]
+        self.assertIn(allocation["unit"], BUDGET_UNITS)
+        self.assertIn(allocation["measurement"], MEASUREMENT_VALUES)
+        self.assertIn(allocation["enforcement"], ENFORCEMENT_VALUES)
+        self.assertIn("measurement_source", allocation)
+        self.assertIsInstance(allocation["evidence_refs"], list)
+        for key in ["worker", "tool", "retry", "review"]:
+            self.assertIn(type(allocation[key]), {int, float})
+            self.assertGreaterEqual(allocation[key], 0)
+        if allocation["measurement"] == "unavailable":
+            self.assertIsNone(allocation["measurement_source"])
+            self.assertEqual(allocation["enforcement"], "advisory")
+        if allocation["enforcement"] != "advisory":
+            self.assertEqual(allocation["measurement"], "observed")
+            self.assertIsInstance(allocation["measurement_source"], str)
+            self.assertTrue(allocation["measurement_source"])
+
+    def test_task_authority_and_escalation_are_native_typed(self):
+        task = self.load_yaml("task-capsule.yaml")
+        self.assertEqual(task["escalation"]["return_status"], "NEEDS_CAPABILITY")
+        for key in [
+            "may_ask_user",
+            "may_expand_scope",
+            "may_spawn_agents",
+            "may_change_profile",
+            "may_acquire_permissions",
         ]:
-            self.assertIn(status, text)
+            self.assertIs(task["authority"][key], False)
+        self.assertIs(task["premise"]["settled"], False)
+        self.assertIs(type(task["retry_allowance"]), int)
+
+    def test_task_return_contract_exactly_matches_return_capsule_payload(self):
+        task = self.load_yaml("task-capsule.yaml")
+        returned = self.load_yaml("RETURN-CAPSULE.yaml")
+        payload_keys = set(returned) - {"_template"}
+        self.assertEqual(set(task["return_contract"]), payload_keys)
+        for identity in ["goal_id", "assignment_id", "logical_teammate_id"]:
+            self.assertIn(identity, task)
+            self.assertIn(identity, returned)
+        for additive_alias in ["decision_delta", "concerns"]:
+            self.assertIn(additive_alias, returned)
+
+    def test_return_statuses_are_machine_readable_not_comment_only(self):
+        returned = self.load_yaml("RETURN-CAPSULE.yaml")
+        self.assertEqual(set(returned["_template"]["allowed_statuses"]), STATUS_VALUES)
+        self.assertEqual(returned["status"], "")
+        usage = returned["usage"]
+        self.assertIsNone(usage["unit"])
+        self.assertEqual(usage["measurement"], "unavailable")
+        self.assertIsNone(usage["amount"])
+        self.assertIsNone(usage["source"])
 
     def test_question_bundle_tracks_decisions_and_reversible_defaults(self):
         text = self.read("QUESTION-BUNDLE.md").lower()
@@ -216,6 +238,7 @@ class TeamTemplateContracts(unittest.TestCase):
         ]
         for name in ["TEAMMATE-CAPSULE.yaml", "task-capsule.yaml", "RETURN-CAPSULE.yaml"]:
             text = self.read(name).lower()
+            self.load_yaml(name)
             for pattern in forbidden:
                 self.assertIsNone(re.search(pattern, text), f"{name}: {pattern}")
 

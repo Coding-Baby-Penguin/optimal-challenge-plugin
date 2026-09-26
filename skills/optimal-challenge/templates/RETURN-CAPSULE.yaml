@@ -1,6 +1,15 @@
-# Allowed status values: NEEDS_CAPABILITY, NEEDS_DECISION, complete, partial,
-# blocked, degraded, failed. Never include secrets, complete transcripts, or
-# unverified worker beliefs as project facts. Point to large artifacts instead.
+# Never include secrets, complete transcripts, or unverified worker beliefs as
+# project facts. Point to large artifacts instead.
+_template:
+  allowed_statuses:
+    - NEEDS_CAPABILITY
+    - NEEDS_DECISION
+    - complete
+    - partial
+    - blocked
+    - degraded
+    - failed
+goal_id: ""
 assignment_id: ""
 logical_teammate_id: ""
 status: ""
@@ -8,13 +17,15 @@ changed_artifacts: []
 verification: []
 evidence_refs: []
 decisions: []
+decision_delta: []
 assumptions: []
 risks: []
+concerns: []
 needs:
   capabilities: []
   decisions: []
 usage:
-  unit: ""
+  unit: null
   measurement: unavailable
   amount: null
-  source: ""
+  source: null

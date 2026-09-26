@@ -108,15 +108,17 @@ load_effective_config(root, task_override={"mode": "team-requested", "profile": 
 ## Development schema validation
 
 Runtime configuration code uses only the Python standard library. Tests use
-the pinned Draft 2020-12 implementation in `requirements-dev.txt`. On
-PowerShell, install it outside the repository and expose only that temporary
-target to the test process:
+the pinned Draft 2020-12 and PyYAML implementations in `requirements-dev.txt`.
+Use Python 3.12 (including Codex's bundled Python 3.12) so pinned binary wheels
+are available. On PowerShell, install them outside the repository and expose
+only that temporary target to the test process:
 
 ```powershell
-$schemaDeps = Join-Path $env:TEMP 'optimal-challenge-jsonschema-4.25.1'
-python -m pip install --disable-pip-version-check --target $schemaDeps -r requirements-dev.txt
-$env:PYTHONPATH = $schemaDeps
-python -m unittest -v tests.validation.test_orchestration_config
+$validationDeps = Join-Path $env:TEMP 'optimal-challenge-validation-deps'
+$python312 = '<path-to-python-3.12>' # Codex's bundled Python 3.12 is suitable.
+& $python312 -m pip install --disable-pip-version-check --target $validationDeps -r requirements-dev.txt
+$env:PYTHONPATH = $validationDeps
+& $python312 -m unittest discover -v
 ```
 
 ## Deliberately retained literals

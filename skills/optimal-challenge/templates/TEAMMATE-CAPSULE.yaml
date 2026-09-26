@@ -1,14 +1,16 @@
 # Reconstructable logical identity only. Never include secrets, complete transcripts,
-# or unverified worker beliefs as project facts. Empty native-handle fields mean unavailable.
+# or unverified worker beliefs as project facts. Unavailable handles must remain null.
+# When available, replace null with this fully populated object shape:
+# native_handle:
+#   provider: example-provider
+#   handle: example-handle
+#   expires_at: "2099-01-01T00:00:00Z"
+#   evidence_ref: evidence-example
 logical_teammate_id: ""
 role: ""
 capability_class: standard
 continuity_mode: fresh
-native_handle:
-  provider: ""
-  handle: ""
-  expires_at: ""
-  evidence_ref: ""
+native_handle: null
 working_set_evidence_refs: []
 trust:
   successful_reviews: 0
