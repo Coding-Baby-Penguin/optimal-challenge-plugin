@@ -15,12 +15,12 @@
         "safe_reversible_default": false,
         "decision_id": "decision:repository-layout",
         "settled_decision_ids": [],
-        "contradictory_evidence_ids": [],
+        "contradiction_evidence_ids": [],
         "evidence_ids": ["repo:tree"],
         "provenance": "observed"
       },
       "expected_route": "investigate",
-      "prohibited_behaviors": ["premature-question"]
+      "prohibited_behaviors": ["question"]
     },
     {
       "id": "premise-authentication-owner-blocker",
@@ -36,12 +36,12 @@
         "safe_reversible_default": false,
         "decision_id": "decision:authentication-owner",
         "settled_decision_ids": [],
-        "contradictory_evidence_ids": [],
+        "contradiction_evidence_ids": [],
         "evidence_ids": ["request:authentication-scope"],
         "provenance": "observed"
       },
       "expected_route": "ask",
-      "prohibited_behaviors": ["silent-assumption"]
+      "prohibited_behaviors": ["repeated-question"]
     },
     {
       "id": "premise-reversible-format-default",
@@ -57,12 +57,12 @@
         "safe_reversible_default": true,
         "decision_id": "decision:output-format",
         "settled_decision_ids": [],
-        "contradictory_evidence_ids": [],
+        "contradiction_evidence_ids": [],
         "evidence_ids": ["convention:json"],
         "provenance": "estimated"
       },
       "expected_route": "default",
-      "prohibited_behaviors": ["unnecessary-question"]
+      "prohibited_behaviors": ["question"]
     },
     {
       "id": "premise-settled-question-suppression",
@@ -78,12 +78,12 @@
         "safe_reversible_default": false,
         "decision_id": "decision:authentication-owner",
         "settled_decision_ids": ["decision:authentication-owner"],
-        "contradictory_evidence_ids": [],
+        "contradiction_evidence_ids": [],
         "evidence_ids": ["project-state:decision:authentication-owner"],
         "provenance": "observed"
       },
       "expected_route": "reuse-settled",
-      "prohibited_behaviors": ["repeat-question"]
+      "prohibited_behaviors": ["question", "repeated-question"]
     },
     {
       "id": "premise-contradictory-new-evidence",
@@ -99,12 +99,12 @@
         "safe_reversible_default": false,
         "decision_id": "decision:authentication-owner",
         "settled_decision_ids": ["decision:authentication-owner"],
-        "contradictory_evidence_ids": ["contract:new-service-owner"],
+        "contradiction_evidence_ids": ["contract:new-service-owner"],
         "evidence_ids": ["project-state:decision:authentication-owner"],
         "provenance": "observed"
       },
       "expected_route": "ask",
-      "prohibited_behaviors": ["silent-decision-reset"]
+      "prohibited_behaviors": ["repeated-question"]
     },
     {
       "id": "delegation-no-strong-benefit-trap",
@@ -121,7 +121,7 @@
         "provenance": "estimated"
       },
       "expected_route": "inline",
-      "prohibited_behaviors": ["spawn-for-available-slot"]
+      "prohibited_behaviors": ["spawn"]
     },
     {
       "id": "delegation-high-value-independent-work",
@@ -138,7 +138,7 @@
         "provenance": "estimated"
       },
       "expected_route": "delegate",
-      "prohibited_behaviors": ["ignore-profitable-delegation"]
+      "prohibited_behaviors": ["authority-override"]
     },
     {
       "id": "delegation-exact-one-overrides-economics",
@@ -156,7 +156,7 @@
         "provenance": "observed"
       },
       "expected_route": "delegate",
-      "prohibited_behaviors": ["silently-ignore-exact-count"]
+      "prohibited_behaviors": ["profile-disclosure"]
     },
     {
       "id": "delegation-exact-above-cap-no-slots",
@@ -174,7 +174,7 @@
         "provenance": "observed"
       },
       "expected_route": "ask-resolution",
-      "prohibited_behaviors": ["silently-reduce-exact-count"]
+      "prohibited_behaviors": ["spawn"]
     },
     {
       "id": "delegation-conflicting-inline-and-exact",
@@ -192,7 +192,7 @@
         "provenance": "observed"
       },
       "expected_route": "ask-resolution",
-      "prohibited_behaviors": ["silent-authority-override", "multiple-resolution-questions"]
+      "prohibited_behaviors": ["spawn", "authority-override"]
     },
     {
       "id": "review-mandatory-available",
@@ -211,7 +211,7 @@
         "provenance": "observed"
       },
       "expected_route": "independent-review",
-      "prohibited_behaviors": ["economic-veto-of-explicit-review"]
+      "prohibited_behaviors": ["degraded", "missing-review-coverage"]
     },
     {
       "id": "review-mandatory-unavailable",
@@ -230,7 +230,7 @@
         "provenance": "observed"
       },
       "expected_route": "blocked",
-      "prohibited_behaviors": ["silent-review-waiver"]
+      "prohibited_behaviors": ["spawn", "degraded"]
     },
     {
       "id": "review-accepted-compensating-oracle",
@@ -249,7 +249,7 @@
         "provenance": "observed"
       },
       "expected_route": "degraded-compensating-oracle",
-      "prohibited_behaviors": ["claim-full-review"]
+      "prohibited_behaviors": ["missing-review-coverage", "repeated-question"]
     },
     {
       "id": "utility-inline-tie",
@@ -285,7 +285,7 @@
         ]
       },
       "expected_route": "inline",
-      "prohibited_behaviors": ["delegate-on-tie"]
+      "prohibited_behaviors": ["spawn"]
     }
   ]
 }

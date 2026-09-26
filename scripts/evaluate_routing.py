@@ -25,6 +25,42 @@ UTILITY_KEYS = (
     "expected_rework_risk",
 )
 REVIEW_MARGINS = {"economy": 6, "balanced": 3, "quality": 1}
+PREMISE_PROVENANCE_KEYS = (
+    "wrongness_likelihood",
+    "rework_cost",
+    "expected_rework_avoided",
+    "user_attention_cost",
+)
+DELEGATION_PROVENANCE_KEYS = tuple(
+    [f"benefits.{name}" for name in BENEFIT_KEYS] + [f"costs.{name}" for name in COST_KEYS]
+)
+REVIEW_PROVENANCE_KEYS = ("defect_likelihood", "impact", "detection_likelihood", "review_cost")
+PROHIBITED_BEHAVIOR_NAMES = {
+    "question",
+    "spawn",
+    "profile-disclosure",
+    "authority-override",
+    "repeated-question",
+    "missing-review-coverage",
+    "degraded",
+}
+
+
+def detect_prohibited_behaviors(result: Mapping[str, Any], prohibited: Sequence[str]) -> list[str]:
+    """Return configured prohibited behaviors that are observable in a result."""
+    unknown = [name for name in prohibited if name not in PROHIBITED_BEHAVIOR_NAMES]
+    if unknown:
+        raise ValueError(f"unknown prohibited behavior name(s): {', '.join(unknown)}")
+    observed = {
+        "question": isinstance(result.get("question_count"), int) and result.get("question_count", 0) > 0,
+        "spawn": isinstance(result.get("spawn_count"), int) and result.get("spawn_count", 0) > 0,
+        "profile-disclosure": result.get("profile_disclosed") is True,
+        "authority-override": result.get("authority_override") is True,
+        "repeated-question": result.get("repeated_question") is True,
+        "missing-review-coverage": result.get("review_coverage") == "none",
+        "degraded": result.get("status") == "degraded",
+    }
+    return [name for name in prohibited if observed[name]]
 
 
 def _score(value: Any, name: str, *, maximum: int = 3) -> int:
@@ -40,18 +76,32 @@ def _evidence(case: Mapping[str, Any]) -> list[str]:
     return list(value)
 
 
-def _provenance(case: Mapping[str, Any]) -> str | dict[str, str]:
+def _require_bool(source: Mapping[str, Any], key: str, path: str) -> bool:
+    value = source.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(f"{path}: expected a boolean")
+    return value
+
+
+def _provenance(
+    case: Mapping[str, Any],
+    expected_keys: Sequence[str],
+    *,
+    path: str = "$.provenance",
+) -> tuple[str | dict[str, str], bool]:
     value = case.get("provenance")
     if isinstance(value, str):
         if value not in PROVENANCE_VALUES:
-            raise ValueError("provenance: expected observed, estimated, or unknown")
-        return value
-    if isinstance(value, Mapping) and value:
+            raise ValueError(f"{path}: expected observed, estimated, or unknown")
+        return value, value != "unknown"
+    if isinstance(value, Mapping):
         result = dict(value)
-        if any(item not in PROVENANCE_VALUES for item in result.values()):
-            raise ValueError("provenance: every factor must be observed, estimated, or unknown")
-        return result
-    raise ValueError("provenance: unexplained scores require observed, estimated, or unknown provenance")
+        if set(result) != set(expected_keys):
+            raise ValueError(f"{path}: expected exactly {', '.join(expected_keys)}")
+        if any(not isinstance(item, str) or item not in PROVENANCE_VALUES for item in result.values()):
+            raise ValueError(f"{path}: every factor must be observed, estimated, or unknown")
+        return result, all(item != "unknown" for item in result.values())
+    raise ValueError(f"{path}: unexplained scores require a global value or exact factor map")
 
 
 def _base(
@@ -63,7 +113,6 @@ def _base(
     reason: str,
     threshold: Any = None,
     margin: Any = None,
-    behaviors: Sequence[str] = (),
 ) -> dict[str, Any]:
     return {
         "route": route,
@@ -73,7 +122,13 @@ def _base(
         "margin": margin,
         "provenance": dict(provenance) if isinstance(provenance, Mapping) else provenance,
         "reason": reason,
-        "behaviors": list(behaviors),
+        "question_count": 0,
+        "spawn_count": 0,
+        "profile_disclosed": False,
+        "authority_override": False,
+        "repeated_question": False,
+        "review_coverage": "not-applicable",
+        "status": "ok",
     }
 
 
@@ -81,7 +136,11 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
     """Apply premise-risk and question-value gates to one unresolved premise."""
     if not isinstance(case, Mapping):
         raise TypeError("case must be a mapping")
-    if case.get("direct_fast_path") is True:
+    for key in ("changes_work_graph", "irreversible", "cheap_investigation", "safe_reversible_default"):
+        if key in case:
+            _require_bool(case, key, f"$.{key}")
+    direct_fast_path = _require_bool(case, "direct_fast_path", "$.direct_fast_path") if "direct_fast_path" in case else False
+    if direct_fast_path:
         result = _base(
             route="direct",
             factors={},
@@ -94,13 +153,17 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
         return result
 
     evidence_ids = _evidence(case)
-    contradictory = case.get("contradictory_evidence_ids", [])
+    contradictory = case.get("contradiction_evidence_ids", [])
     if not isinstance(contradictory, list) or any(not isinstance(item, str) or not item for item in contradictory):
-        raise ValueError("contradictory_evidence_ids: expected a list of non-empty strings")
+        raise ValueError("$.contradiction_evidence_ids: expected a list of non-empty strings")
     for item in contradictory:
         if item not in evidence_ids:
             evidence_ids.append(item)
-    provenance = _provenance(case)
+    provenance, _ = _provenance(case, PREMISE_PROVENANCE_KEYS)
+    changes_work_graph = _require_bool(case, "changes_work_graph", "$.changes_work_graph")
+    irreversible = _require_bool(case, "irreversible", "$.irreversible")
+    cheap_investigation = _require_bool(case, "cheap_investigation", "$.cheap_investigation")
+    safe_reversible_default = _require_bool(case, "safe_reversible_default", "$.safe_reversible_default")
     wrongness = _score(case.get("wrongness_likelihood"), "wrongness_likelihood")
     rework_cost = _score(case.get("rework_cost"), "rework_cost")
     avoided = _score(case.get("expected_rework_avoided"), "expected_rework_avoided", maximum=9)
@@ -125,20 +188,27 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(settled, list) or any(not isinstance(item, str) or not item for item in settled):
         raise ValueError("settled_decision_ids: expected a list of non-empty strings")
 
-    if decision_id and decision_id in settled and not contradictory:
+    invalidated_decision_id = decision_id if decision_id in settled and contradictory else None
+    if decision_id in settled and not contradictory:
         route = "reuse-settled"
         reason = f"Decision {decision_id} is settled and no contradictory evidence invalidates it."
-    elif case.get("cheap_investigation") is True:
+    elif cheap_investigation:
         route = "investigate"
         reason = "A cheap investigation can resolve the premise without interrupting the user."
     elif (
         premise_risk >= threshold["premise_risk"]
         and question_value > threshold["question_value_gt"]
-        and (case.get("changes_work_graph") is True or case.get("irreversible") is True)
-        and case.get("safe_reversible_default") is not True
+        and (changes_work_graph or irreversible)
+        and not safe_reversible_default
     ):
         route = "ask"
-        reason = "The material premise changes the work graph or an irreversible decision and asking has positive value."
+        if invalidated_decision_id:
+            reason = (
+                f"Decision {invalidated_decision_id} was invalidated by contradictory evidence "
+                f"{', '.join(contradictory)}; the material premise must be asked again."
+            )
+        else:
+            reason = "The material premise changes the work graph or an irreversible decision and asking has positive value."
     else:
         route = "default"
         reason = "Risk or question value is below the blocking boundary, or a safe reversible default exists."
@@ -155,8 +225,10 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
         {
             "ask_user": route == "ask",
             "decision_id": decision_id,
-            "profile_disclosed": False,
-            "contradictory_evidence_ids": list(contradictory),
+            "question_count": 1 if route == "ask" else 0,
+            "invalidated_decision_id": invalidated_decision_id,
+            "contradiction_evidence_ids": list(contradictory),
+            "repeated_question": route == "ask" and decision_id in settled and invalidated_decision_id is None,
         }
     )
     return result
@@ -178,7 +250,7 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     if not isinstance(case, Mapping) or not isinstance(config, Mapping):
         raise TypeError("case and config must be mappings")
     evidence_ids = _evidence(case)
-    provenance = _provenance(case)
+    provenance, economics_known = _provenance(case, DELEGATION_PROVENANCE_KEYS)
     benefits = _factor_group(case, "benefits", BENEFIT_KEYS)
     costs = _factor_group(case, "costs", COST_KEYS)
     value = sum(benefits.values()) - sum(costs.values())
@@ -202,7 +274,11 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         raise ValueError("config.team_limits.exact_specialists: expected null or 0 to 32")
     available = case.get("available_specialist_slots", 0)
     if isinstance(available, bool) or not isinstance(available, int) or available < 0:
-        raise ValueError("available_specialist_slots: expected a non-negative integer")
+        raise ValueError("$.available_specialist_slots: expected a non-negative integer")
+    observable_done_condition = _require_bool(case, "observable_done_condition", "$.observable_done_condition")
+    fits_job_envelope = _require_bool(case, "fits_job_envelope", "$.fits_job_envelope")
+    platform_available = _require_bool(case, "platform_available", "$.platform_available")
+    authority_allows = _require_bool(case, "authority_allows", "$.authority_allows")
 
     factors = {
         "benefits": benefits,
@@ -224,10 +300,10 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         specialist_count = 0
         reason = "Explicit inline authority forbids specialist creation."
     elif exact is not None:
-        within_authority = case.get("authority_allows") is True
-        available_route = case.get("platform_available") is True and available >= exact
-        within_envelope = case.get("fits_job_envelope") is True
-        has_done_condition = case.get("observable_done_condition") is True
+        within_authority = authority_allows
+        available_route = platform_available and available >= exact
+        within_envelope = fits_job_envelope
+        has_done_condition = observable_done_condition
         if within_authority and available_route and within_envelope and has_done_condition:
             route = "delegate"
             specialist_count = exact
@@ -237,13 +313,14 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
             question_count = 1
             reason = "The exact request lacks an observable done condition or cannot fit current authority, availability, or the active job envelope."
     elif (
-        value >= margin
+        economics_known
+        and value >= margin
         and value > 0
         and strong_benefit
-        and case.get("observable_done_condition") is True
-        and case.get("fits_job_envelope") is True
-        and case.get("platform_available") is True
-        and case.get("authority_allows") is True
+        and observable_done_condition
+        and fits_job_envelope
+        and platform_available
+        and authority_allows
         and available >= 1
     ):
         route = "delegate"
@@ -252,7 +329,11 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     else:
         route = "inline"
         specialist_count = 0
-        reason = "Delegation does not clear every economic, evidence, authority, and envelope gate."
+        reason = (
+            "Delegation economics are unknown, so optional delegation stays inline."
+            if not economics_known and exact is None
+            else "Delegation does not clear every economic, evidence, authority, and envelope gate."
+        )
 
     result = _base(
         route=route,
@@ -268,6 +349,11 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
             "specialist_count": specialist_count,
             "exact_specialists": exact,
             "question_count": question_count,
+            "spawn_count": specialist_count if route == "delegate" else 0,
+            "authority_override": exact is not None and exact > 0 and route == "delegate",
+            "status": "unresolved" if route == "ask-resolution" else "ok",
+            "economics_known": economics_known,
+            "economics_status": "known" if economics_known else "unknown",
             "mode": mode,
             "profile": profile,
         }
@@ -280,7 +366,7 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     if not isinstance(case, Mapping) or not isinstance(config, Mapping):
         raise TypeError("case and config must be mappings")
     evidence_ids = _evidence(case)
-    provenance = _provenance(case)
+    provenance, economics_known = _provenance(case, REVIEW_PROVENANCE_KEYS)
     defect = _score(case.get("defect_likelihood"), "defect_likelihood")
     impact = _score(case.get("impact"), "impact")
     detection = _score(case.get("detection_likelihood"), "detection_likelihood")
@@ -294,14 +380,19 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     margin = REVIEW_MARGINS.get(profile, verification.get("review_margin"))
     if isinstance(margin, bool) or not isinstance(margin, int) or not 1 <= margin <= 27:
         raise ValueError("config.verification.review_margin: expected 1 to 27")
-    mandatory = bool(
-        case.get("mandatory_independent_review")
-        or case.get("consequential_weak_oracle")
-        or verification.get("mandatory_independent_review")
+    requested_mandatory = _require_bool(case, "mandatory_independent_review", "$.mandatory_independent_review")
+    consequential = _require_bool(case, "consequential_weak_oracle", "$.consequential_weak_oracle")
+    available = _require_bool(case, "independent_review_available", "$.independent_review_available")
+    accepted = _require_bool(
+        case,
+        "user_accepts_compensating_oracle",
+        "$.user_accepts_compensating_oracle",
     )
-    available = case.get("independent_review_available") is True
+    configured_mandatory = verification.get("mandatory_independent_review")
+    if not isinstance(configured_mandatory, bool):
+        raise ValueError("$.config.verification.mandatory_independent_review: expected a boolean")
+    mandatory = requested_mandatory or consequential or configured_mandatory
     compensating = case.get("compensating_oracle")
-    accepted = case.get("user_accepts_compensating_oracle") is True
 
     if mandatory and not available:
         if isinstance(compensating, str) and compensating.strip() and accepted:
@@ -313,12 +404,16 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     elif mandatory:
         route = "independent-review"
         reason = "Independent review is an explicit or consequential-work execution constraint."
-    elif value >= margin and available:
+    elif economics_known and value >= margin and available:
         route = "independent-review"
         reason = "Expected review value meets the profile threshold and an independent reviewer is available."
     else:
         route = "self-check"
-        reason = "Independent review does not meet the calculated threshold or is unavailable for optional review."
+        reason = (
+            "Review economics are unknown, so optional independent review cannot proceed."
+            if not economics_known
+            else "Independent review does not meet the calculated threshold or is unavailable for optional review."
+        )
 
     result = _base(
         route=route,
@@ -336,7 +431,26 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
         margin=margin,
         reason=reason,
     )
-    result.update({"mandatory": mandatory, "review_available": available, "compensating_oracle": compensating})
+    coverage = {
+        "independent-review": "independent",
+        "degraded-compensating-oracle": "compensating",
+        "self-check": "self",
+        "blocked": "none",
+    }[route]
+    status = "degraded" if route == "degraded-compensating-oracle" else ("blocked" if route == "blocked" else "ok")
+    result.update(
+        {
+            "mandatory": mandatory,
+            "review_available": available,
+            "compensating_oracle": compensating,
+            "spawn_count": 1 if route == "independent-review" else 0,
+            "authority_override": mandatory,
+            "review_coverage": coverage,
+            "status": status,
+            "economics_known": economics_known,
+            "economics_status": "known" if economics_known else "unknown",
+        }
+    )
     return result
 
 
@@ -347,6 +461,8 @@ def compare_routes(
     independence_mandatory: bool = False,
 ) -> dict[str, Any]:
     """Compare normalized whole-job utility after mandatory gates have passed."""
+    if not isinstance(independence_mandatory, bool):
+        raise ValueError("$.independence_mandatory: expected a boolean")
     if isinstance(routes, (str, bytes)) or not isinstance(routes, Sequence) or not routes:
         raise ValueError("routes: expected a non-empty sequence")
     weights = config.get("objective_weights") if isinstance(config, Mapping) else None
@@ -363,15 +479,25 @@ def compare_routes(
     provenance_by_route: dict[str, str | dict[str, str]] = {}
     eligible: list[tuple[str, Mapping[str, Any], float]] = []
     ineligible: list[str] = []
-    for candidate in routes:
+    for index, candidate in enumerate(routes):
         if not isinstance(candidate, Mapping):
             raise ValueError("routes: every route must be an object")
         route_id = candidate.get("id")
         if not isinstance(route_id, str) or not route_id or route_id in utilities:
             raise ValueError("routes.id: expected unique non-empty strings")
+        route_path = f"$.routes[{index}]"
+        route_name = candidate.get("route")
+        if not isinstance(route_name, str) or not route_name:
+            raise ValueError(f"{route_path}.route: expected a non-empty string")
         evidence_by_route[route_id] = _evidence(candidate)
-        provenance = _provenance(candidate)
+        provenance, provenance_complete = _provenance(
+            candidate,
+            UTILITY_KEYS,
+            path=f"{route_path}.provenance",
+        )
         provenance_by_route[route_id] = provenance
+        gates_pass = _require_bool(candidate, "mandatory_gates_passed", f"{route_path}.mandatory_gates_passed")
+        _require_bool(candidate, "independence", f"{route_path}.independence")
         factor_values = {key: _score(candidate.get(key), key) for key in UTILITY_KEYS}
         factors_by_route[route_id] = factor_values
         utility = (
@@ -381,11 +507,7 @@ def compare_routes(
             - weights["attention"] * factor_values["user_interruption_cost"]
             - weights["rework"] * factor_values["expected_rework_risk"]
         )
-        provenance_unknown = provenance == "unknown" or (
-            isinstance(provenance, Mapping) and any(value == "unknown" for value in provenance.values())
-        )
-        gates_pass = candidate.get("mandatory_gates_passed") is True
-        if not gates_pass or provenance_unknown:
+        if not gates_pass or not provenance_complete:
             utilities[route_id] = None
             ineligible.append(route_id)
         else:
@@ -394,26 +516,33 @@ def compare_routes(
             eligible.append((route_id, candidate, rounded))
 
     if independence_mandatory:
-        independent = [item for item in eligible if item[1].get("independence") is True]
+        independent = [item for item in eligible if item[1]["independence"]]
         eligible = independent
     if not eligible:
-        inline = next((item for item in routes if item.get("route") == "inline" or item.get("id") == "inline"), None)
-        chosen = str(inline.get("id")) if inline is not None else "blocked"
-        reason = "No evidenced route passed the mandatory gates; utility remains explanatory only."
+        chosen = "blocked"
+        selected_route_id = None
+        reason = "No eligible evidenced route passed every mandatory gate; no route was selected."
     else:
         best = max(item[2] for item in eligible)
         tied = [item for item in eligible if abs(item[2] - best) <= 1e-12]
-        inline = next((item for item in tied if item[1].get("route") == "inline" or item[0] == "inline"), None)
-        selected = inline if inline is not None and not independence_mandatory else tied[0]
-        chosen = selected[0]
-        reason = (
-            "Utility tied, so authority defaults to inline execution."
-            if len(tied) > 1 and inline is not None and not independence_mandatory
-            else "The route has the greatest eligible normalized whole-job utility."
-        )
+        inline = next((item for item in tied if item[1]["route"] == "inline"), None)
+        if len(tied) > 1 and inline is None:
+            chosen = "unresolved" if independence_mandatory else "inline-required"
+            selected_route_id = None
+            reason = "Eligible non-inline routes tied; no arbitrary worker route was selected."
+        else:
+            selected = inline if inline is not None else tied[0]
+            chosen = selected[0]
+            selected_route_id = selected[0]
+            reason = (
+                "Utility tied, so the eligible inline route was selected."
+                if len(tied) > 1 and inline is not None
+                else "The route has the greatest eligible normalized whole-job utility."
+            )
 
     return {
         "route": chosen,
+        "selected_route_id": selected_route_id,
         "factors": factors_by_route,
         "evidence_ids": evidence_by_route,
         "threshold": "greatest eligible utility; ties inline unless independence is mandatory",
@@ -422,7 +551,13 @@ def compare_routes(
         "reason": reason,
         "utilities": utilities,
         "ineligible_routes": ineligible,
-        "behaviors": [],
+        "question_count": 0,
+        "spawn_count": 0,
+        "profile_disclosed": False,
+        "authority_override": False,
+        "repeated_question": False,
+        "review_coverage": "not-applicable",
+        "status": "blocked" if chosen == "blocked" else ("unresolved" if selected_route_id is None else "ok"),
     }
 
 
@@ -439,7 +574,10 @@ def _evaluate_fixture(fixture: Mapping[str, Any], config: Mapping[str, Any]) -> 
         return score_review(item, config)
     if kind == "utility":
         routes = item.get("routes")
-        return compare_routes(routes, config, independence_mandatory=bool(item.get("independence_mandatory")))
+        independence_mandatory = item.get("independence_mandatory", False)
+        if not isinstance(independence_mandatory, bool):
+            raise ValueError("$.input.independence_mandatory: expected a boolean")
+        return compare_routes(routes, config, independence_mandatory=independence_mandatory)
     raise ValueError(f"{fixture.get('id', '<unknown>')}: unsupported kind {kind!r}")
 
 
@@ -469,7 +607,7 @@ def validate_manifest(path: Path) -> int:
         result = _evaluate_fixture(fixture, config)
         if result["route"] != expected:
             raise ValueError(f"{fixture_id}: expected {expected!r}, calculated {result['route']!r}")
-        present = set(result.get("behaviors", [])) & set(prohibited)
+        present = detect_prohibited_behaviors(result, prohibited)
         if present:
             raise ValueError(f"{fixture_id}: prohibited behaviors present: {sorted(present)}")
     return len(fixtures)

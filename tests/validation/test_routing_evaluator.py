@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from scripts.evaluate_routing import compare_routes, score_delegation, score_premise, score_review
+from scripts.evaluate_routing import (
+    compare_routes,
+    detect_prohibited_behaviors,
+    score_delegation,
+    score_premise,
+    score_review,
+    validate_manifest,
+)
 from scripts.orchestration_config import load_effective_config
 
 
@@ -31,7 +39,7 @@ def premise_case(**overrides):
         "safe_reversible_default": False,
         "decision_id": "decision:auth-owner",
         "settled_decision_ids": [],
-        "contradictory_evidence_ids": [],
+        "contradiction_evidence_ids": [],
         "evidence_ids": evidence("source:user-request"),
         "provenance": "observed",
     }
@@ -128,11 +136,15 @@ class PremiseCalculationTests(unittest.TestCase):
         result = score_premise(
             premise_case(
                 settled_decision_ids=["decision:auth-owner"],
-                contradictory_evidence_ids=["source:new-contract"],
+                contradiction_evidence_ids=["source:new-contract"],
             )
         )
         self.assertEqual(result["route"], "ask")
         self.assertIn("source:new-contract", result["evidence_ids"])
+        self.assertEqual(result["invalidated_decision_id"], "decision:auth-owner")
+        self.assertEqual(result["contradiction_evidence_ids"], ["source:new-contract"])
+        self.assertIn("decision:auth-owner", result["reason"])
+        self.assertIn("source:new-contract", result["reason"])
 
     def test_direct_fast_path_has_no_scoring_or_profile_chatter(self):
         result = score_premise({"id": "direct", "direct_fast_path": True})
@@ -348,11 +360,183 @@ class UtilityCalculationTests(unittest.TestCase):
         self.assertIn("unsafe", result["ineligible_routes"])
         self.assertIn("unknown", result["ineligible_routes"])
 
+    def test_no_eligible_route_blocks_without_selecting_inline(self):
+        result = compare_routes(
+            [
+                route("inline", mandatory_gates_passed=False),
+                route("worker", provenance="unknown"),
+            ],
+            self.config,
+        )
+        self.assertEqual(result["route"], "blocked")
+        self.assertIsNone(result["selected_route_id"])
+
+    def test_mandatory_independence_blocks_without_eligible_independent_route(self):
+        result = compare_routes(
+            [route("inline"), route("worker", independence=True, mandatory_gates_passed=False)],
+            self.config,
+            independence_mandatory=True,
+        )
+        self.assertEqual(result["route"], "blocked")
+        self.assertIsNone(result["selected_route_id"])
+
+    def test_non_inline_tie_requires_inline_instead_of_arbitrary_worker(self):
+        result = compare_routes([route("worker-a"), route("worker-b")], self.config)
+        self.assertEqual(result["route"], "inline-required")
+        self.assertIsNone(result["selected_route_id"])
+
+    def test_worker_named_inline_is_not_treated_as_inline_route(self):
+        disguised = route("inline", route="worker")
+        result = compare_routes([disguised, route("worker-b")], self.config)
+        self.assertEqual(result["route"], "inline-required")
+        self.assertIsNone(result["selected_route_id"])
+
     def test_out_of_range_or_unexplained_utility_factor_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "expected_quality"):
             compare_routes([route("inline", expected_quality=4)], self.config)
         with self.assertRaisesRegex(ValueError, "evidence_ids"):
             compare_routes([route("inline", evidence_ids=[])], self.config)
+
+
+class RoutingSafeguardTests(unittest.TestCase):
+    def setUp(self):
+        self.config = load_effective_config(ROOT)
+
+    def test_scorer_specific_provenance_maps_require_exact_keys(self):
+        premise_provenance = {
+            "wrongness_likelihood": "observed",
+            "rework_cost": "estimated",
+            "expected_rework_avoided": "estimated",
+            "user_attention_cost": "observed",
+        }
+        delegation_provenance = {
+            **{f"benefits.{name}": "estimated" for name in ("parallel", "independence", "context", "quality")},
+            **{f"costs.{name}": "estimated" for name in ("setup", "transfer", "merge", "review_rework")},
+        }
+        review_provenance = {
+            "defect_likelihood": "estimated",
+            "impact": "observed",
+            "detection_likelihood": "estimated",
+            "review_cost": "observed",
+        }
+        utility_provenance = {
+            "expected_quality": "estimated",
+            "total_job_cost": "observed",
+            "critical_path_latency": "estimated",
+            "user_interruption_cost": "observed",
+            "expected_rework_risk": "estimated",
+        }
+
+        self.assertEqual(score_premise(premise_case(provenance=premise_provenance))["provenance"], premise_provenance)
+        self.assertTrue(score_delegation(delegation_case(provenance=delegation_provenance), self.config)["economics_known"])
+        self.assertTrue(score_review(review_case(provenance=review_provenance), self.config)["economics_known"])
+        self.assertEqual(compare_routes([route("inline", provenance=utility_provenance)], self.config)["route"], "inline")
+
+        for bad in (
+            {"wrongness_likelihood": "observed"},
+            {**premise_provenance, "surprise": "observed"},
+            {**premise_provenance, "rework_cost": "measured"},
+            {**premise_provenance, "rework_cost": []},
+        ):
+            with self.subTest(provenance=bad):
+                with self.assertRaisesRegex(ValueError, r"\$\.provenance"):
+                    score_premise(premise_case(provenance=bad))
+
+    def test_unknown_economics_cannot_trigger_optional_delegation_or_review(self):
+        delegated = score_delegation(delegation_case(provenance="unknown"), self.config)
+        reviewed = score_review(review_case(provenance="unknown"), self.config)
+        self.assertEqual(delegated["route"], "inline")
+        self.assertFalse(delegated["economics_known"])
+        self.assertEqual(reviewed["route"], "self-check")
+        self.assertFalse(reviewed["economics_known"])
+
+    def test_explicit_constraints_route_with_unknown_economics_but_report_unknown(self):
+        exact = load_effective_config(ROOT, task_override={"team_limits": {"exact_specialists": 1}})
+        delegated = score_delegation(delegation_case(provenance="unknown"), exact)
+        reviewed = score_review(review_case(provenance="unknown", mandatory_independent_review=True), self.config)
+        self.assertEqual(delegated["route"], "delegate")
+        self.assertFalse(delegated["economics_known"])
+        self.assertEqual(delegated["economics_status"], "unknown")
+        self.assertEqual(reviewed["route"], "independent-review")
+        self.assertFalse(reviewed["economics_known"])
+        self.assertEqual(reviewed["economics_status"], "unknown")
+
+    def test_utility_requires_complete_known_provenance(self):
+        incomplete = {
+            "expected_quality": "estimated",
+            "total_job_cost": "observed",
+        }
+        with self.assertRaisesRegex(ValueError, r"\$\.routes\[0\]\.provenance"):
+            compare_routes([route("inline", provenance=incomplete)], self.config)
+        unknown = route(
+            "inline",
+            provenance={
+                "expected_quality": "estimated",
+                "total_job_cost": "observed",
+                "critical_path_latency": "unknown",
+                "user_interruption_cost": "observed",
+                "expected_rework_risk": "estimated",
+            },
+        )
+        result = compare_routes([unknown], self.config)
+        self.assertEqual(result["route"], "blocked")
+        self.assertIsNone(result["selected_route_id"])
+
+    def test_case_and_route_controls_require_real_booleans(self):
+        cases = [
+            (lambda: score_premise(premise_case(changes_work_graph="true")), r"\$\.changes_work_graph"),
+            (lambda: score_premise(premise_case(direct_fast_path="false")), r"\$\.direct_fast_path"),
+            (lambda: score_premise({"direct_fast_path": True, "changes_work_graph": "yes"}), r"\$\.changes_work_graph"),
+            (lambda: score_delegation(delegation_case(authority_allows=1), self.config), r"\$\.authority_allows"),
+            (lambda: score_delegation(delegation_case(platform_available="yes"), self.config), r"\$\.platform_available"),
+            (lambda: score_review(review_case(independent_review_available="yes"), self.config), r"\$\.independent_review_available"),
+            (lambda: score_review(review_case(mandatory_independent_review=1), self.config), r"\$\.mandatory_independent_review"),
+            (lambda: compare_routes([route("inline", mandatory_gates_passed="true")], self.config), r"\$\.routes\[0\]\.mandatory_gates_passed"),
+            (lambda: compare_routes([route("inline", independence=0)], self.config), r"\$\.routes\[0\]\.independence"),
+            (lambda: compare_routes([route("inline")], self.config, independence_mandatory="yes"), r"\$\.independence_mandatory"),
+        ]
+        for invoke, path in cases:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ValueError, path):
+                    invoke()
+
+    def test_observable_behavior_detectors_are_not_vacuous(self):
+        delegated = score_delegation(delegation_case(), self.config)
+        settled = score_premise(premise_case(settled_decision_ids=["decision:auth-owner"]))
+        degraded = score_review(
+            review_case(
+                mandatory_independent_review=True,
+                independent_review_available=False,
+                compensating_oracle="deterministic:signed-artifact",
+                user_accepts_compensating_oracle=True,
+            ),
+            self.config,
+        )
+        self.assertEqual(delegated["spawn_count"], 1)
+        self.assertEqual(detect_prohibited_behaviors(delegated, ["spawn"]), ["spawn"])
+        self.assertFalse(settled["repeated_question"])
+        self.assertEqual(detect_prohibited_behaviors(settled, ["question", "repeated-question"]), [])
+        self.assertEqual(degraded["status"], "degraded")
+        self.assertEqual(degraded["review_coverage"], "compensating")
+        self.assertEqual(detect_prohibited_behaviors(degraded, ["degraded", "missing-review-coverage"]), ["degraded"])
+        with self.assertRaisesRegex(ValueError, "unknown prohibited behavior"):
+            detect_prohibited_behaviors(delegated, ["telepathy"])
+
+    def test_manifest_rejects_real_prohibited_behavior_and_unknown_name(self):
+        manifest = json.loads((ROOT / "tests" / "team-routing.json").read_text(encoding="utf-8"))
+        delegated = next(item for item in manifest["cases"] if item["id"] == "delegation-high-value-independent-work")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "routing.json"
+            failing = {"schema_version": 1, "cases": [deepcopy(delegated)]}
+            failing["cases"][0]["prohibited_behaviors"] = ["spawn"]
+            path.write_text(json.dumps(failing), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "prohibited behaviors present.*spawn"):
+                validate_manifest(path)
+
+            failing["cases"][0]["prohibited_behaviors"] = ["telepathy"]
+            path.write_text(json.dumps(failing), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unknown prohibited behavior"):
+                validate_manifest(path)
 
 
 class RoutingScenarioTests(unittest.TestCase):
@@ -372,8 +556,7 @@ class RoutingScenarioTests(unittest.TestCase):
                 effective = load_effective_config(ROOT, task_override=fixture.get("config_override"))
                 result = evaluators[fixture["kind"]](fixture["input"], effective)
                 self.assertEqual(result["route"], fixture["expected_route"])
-                for behavior in fixture["prohibited_behaviors"]:
-                    self.assertNotIn(behavior, result.get("behaviors", []))
+                self.assertEqual(detect_prohibited_behaviors(result, fixture["prohibited_behaviors"]), [])
 
     def test_cli_reports_validated_case_count(self):
         manifest = json.loads((ROOT / "tests" / "team-routing.json").read_text(encoding="utf-8"))
