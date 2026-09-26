@@ -538,6 +538,72 @@ class RoutingSafeguardTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown prohibited behavior"):
                 validate_manifest(path)
 
+    def test_whitespace_only_decision_and_evidence_identifiers_are_rejected(self):
+        invalid_cases = [
+            (lambda: score_premise(premise_case(decision_id=" \t ")), "decision_id"),
+            (lambda: score_premise(premise_case(evidence_ids=[" \t "])), "evidence_ids"),
+            (lambda: score_premise(premise_case(settled_decision_ids=[" \t "])), "settled_decision_ids"),
+            (
+                lambda: score_premise(
+                    premise_case(
+                        settled_decision_ids=["decision:auth-owner"],
+                        contradiction_evidence_ids=[" \t "],
+                    )
+                ),
+                "contradiction_evidence_ids",
+            ),
+            (
+                lambda: score_review(
+                    review_case(
+                        mandatory_independent_review=True,
+                        independent_review_available=False,
+                        compensating_oracle=" \t ",
+                    ),
+                    self.config,
+                ),
+                "compensating_oracle",
+            ),
+        ]
+        for invoke, field in invalid_cases:
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, field):
+                    invoke()
+
+    def test_whitespace_only_route_identifiers_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, r"\$\.routes\[0\]\.id"):
+            compare_routes([route(" \t ")], self.config)
+        with self.assertRaisesRegex(ValueError, r"\$\.routes\[0\]\.route"):
+            compare_routes([route("valid", route=" \t ")], self.config)
+
+    def test_whitespace_only_fixture_and_expected_route_identifiers_are_rejected(self):
+        manifest = json.loads((ROOT / "tests" / "team-routing.json").read_text(encoding="utf-8"))
+        fixture = deepcopy(manifest["cases"][0])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "routing.json"
+            fixture["id"] = " \t "
+            path.write_text(json.dumps({"schema_version": 1, "cases": [fixture]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"\$\.cases\[\]\.id"):
+                validate_manifest(path)
+
+            fixture["id"] = "fixture:valid"
+            fixture["expected_route"] = " \t "
+            path.write_text(json.dumps({"schema_version": 1, "cases": [fixture]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "expected_route"):
+                validate_manifest(path)
+
+    def test_valid_identifiers_preserve_original_whitespace(self):
+        premise = score_premise(
+            premise_case(
+                decision_id=" decision:auth-owner ",
+                evidence_ids=[" source:user-request "],
+            )
+        )
+        utility = compare_routes([route(" route:inline ", route="inline")], self.config)
+        self.assertEqual(premise["decision_id"], " decision:auth-owner ")
+        self.assertEqual(premise["evidence_ids"], [" source:user-request "])
+        self.assertEqual(utility["route"], " route:inline ")
+        self.assertEqual(utility["selected_route_id"], " route:inline ")
+
 
 class RoutingScenarioTests(unittest.TestCase):
     def test_fixture_cases_match_routes_and_prohibited_behaviors(self):

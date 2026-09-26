@@ -69,11 +69,22 @@ def _score(value: Any, name: str, *, maximum: int = 3) -> int:
     return value
 
 
+def _identifier(value: Any, path: str) -> str:
+    """Validate non-whitespace identifier content while preserving the original value."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path}: expected a string with non-whitespace content")
+    return value
+
+
+def _identifier_list(value: Any, path: str, *, require_nonempty: bool = False) -> list[str]:
+    if not isinstance(value, list) or (require_nonempty and not value):
+        requirement = "a non-empty list" if require_nonempty else "a list"
+        raise ValueError(f"{path}: expected {requirement} of identifiers")
+    return [_identifier(item, f"{path}[{index}]") for index, item in enumerate(value)]
+
+
 def _evidence(case: Mapping[str, Any]) -> list[str]:
-    value = case.get("evidence_ids")
-    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
-        raise ValueError("evidence_ids: unexplained scores require one or more non-empty evidence IDs")
-    return list(value)
+    return _identifier_list(case.get("evidence_ids"), "$.evidence_ids", require_nonempty=True)
 
 
 def _require_bool(source: Mapping[str, Any], key: str, path: str) -> bool:
@@ -153,9 +164,10 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
         return result
 
     evidence_ids = _evidence(case)
-    contradictory = case.get("contradiction_evidence_ids", [])
-    if not isinstance(contradictory, list) or any(not isinstance(item, str) or not item for item in contradictory):
-        raise ValueError("$.contradiction_evidence_ids: expected a list of non-empty strings")
+    contradictory = _identifier_list(
+        case.get("contradiction_evidence_ids", []),
+        "$.contradiction_evidence_ids",
+    )
     for item in contradictory:
         if item not in evidence_ids:
             evidence_ids.append(item)
@@ -181,12 +193,8 @@ def score_premise(case: Mapping[str, Any]) -> dict[str, Any]:
         "question_value": question_value,
     }
     threshold = {"premise_risk": 4, "question_value_gt": 0}
-    decision_id = case.get("decision_id")
-    if not isinstance(decision_id, str) or not decision_id.strip():
-        raise ValueError("decision_id: premise decisions require a stable non-empty string ID")
-    settled = case.get("settled_decision_ids", [])
-    if not isinstance(settled, list) or any(not isinstance(item, str) or not item for item in settled):
-        raise ValueError("settled_decision_ids: expected a list of non-empty strings")
+    decision_id = _identifier(case.get("decision_id"), "$.decision_id")
+    settled = _identifier_list(case.get("settled_decision_ids", []), "$.settled_decision_ids")
 
     invalidated_decision_id = decision_id if decision_id in settled and contradictory else None
     if decision_id in settled and not contradictory:
@@ -393,6 +401,8 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
         raise ValueError("$.config.verification.mandatory_independent_review: expected a boolean")
     mandatory = requested_mandatory or consequential or configured_mandatory
     compensating = case.get("compensating_oracle")
+    if compensating is not None:
+        compensating = _identifier(compensating, "$.compensating_oracle")
 
     if mandatory and not available:
         if isinstance(compensating, str) and compensating.strip() and accepted:
@@ -482,13 +492,11 @@ def compare_routes(
     for index, candidate in enumerate(routes):
         if not isinstance(candidate, Mapping):
             raise ValueError("routes: every route must be an object")
-        route_id = candidate.get("id")
-        if not isinstance(route_id, str) or not route_id or route_id in utilities:
+        route_id = _identifier(candidate.get("id"), f"$.routes[{index}].id")
+        if route_id in utilities:
             raise ValueError("routes.id: expected unique non-empty strings")
         route_path = f"$.routes[{index}]"
-        route_name = candidate.get("route")
-        if not isinstance(route_name, str) or not route_name:
-            raise ValueError(f"{route_path}.route: expected a non-empty string")
+        route_name = _identifier(candidate.get("route"), f"{route_path}.route")
         evidence_by_route[route_id] = _evidence(candidate)
         provenance, provenance_complete = _provenance(
             candidate,
@@ -595,14 +603,18 @@ def validate_manifest(path: Path) -> int:
     for fixture in fixtures:
         if not isinstance(fixture, Mapping):
             raise ValueError("every routing case must be an object")
-        fixture_id = fixture.get("id")
-        if not isinstance(fixture_id, str) or not fixture_id or fixture_id in seen:
+        fixture_id = _identifier(fixture.get("id"), "$.cases[].id")
+        if fixture_id in seen:
             raise ValueError("routing case IDs must be unique non-empty strings")
         seen.add(fixture_id)
-        expected = fixture.get("expected_route")
+        expected = _identifier(fixture.get("expected_route"), f"$.cases[{fixture_id}].expected_route")
         prohibited = fixture.get("prohibited_behaviors")
-        if not isinstance(expected, str) or not isinstance(prohibited, list) or any(not isinstance(item, str) for item in prohibited):
+        if not isinstance(prohibited, list):
             raise ValueError(f"{fixture_id}: expected_route and prohibited_behaviors are required")
+        prohibited = [
+            _identifier(item, f"$.cases[{fixture_id}].prohibited_behaviors[{index}]")
+            for index, item in enumerate(prohibited)
+        ]
         config = load_effective_config(ROOT, task_override=fixture.get("config_override"))
         result = _evaluate_fixture(fixture, config)
         if result["route"] != expected:
