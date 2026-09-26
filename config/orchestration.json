@@ -43,11 +43,6 @@
     "measurement": "unavailable",
     "enforcement": "advisory",
     "measurement_source": null,
-    "soft_threshold": null,
-    "adapter_capabilities": {
-      "observed_measurement": {"verified": false, "evidence_id": null},
-      "local_stop": {"verified": false, "evidence_id": null},
-      "provider_stop": {"verified": false, "evidence_id": null}
-    }
+    "soft_threshold": null
   }
 }

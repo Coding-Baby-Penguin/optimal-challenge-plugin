@@ -79,25 +79,44 @@ into the active profile.
 | `budget.enforcement` | `advisory` | `advisory`, `local_enforced`, or `provider_enforced`. |
 | `budget.measurement_source` | `null` | `null` or a non-empty description of the authoritative counter. |
 | `budget.soft_threshold` | `null` | `null` or a positive value no greater than `limit`; optional work is reduced at this point. |
-| `budget.adapter_capabilities.observed_measurement.verified` | `false` | Boolean adapter assertion that the exact surface exposes an observed counter. |
-| `budget.adapter_capabilities.observed_measurement.evidence_id` | `null` | Non-empty acceptance/detection evidence ID when verified; otherwise `null`. |
-| `budget.adapter_capabilities.local_stop.verified` | `false` | Boolean adapter assertion that a matching local stop primitive is available. |
-| `budget.adapter_capabilities.local_stop.evidence_id` | `null` | Non-empty evidence ID when verified; otherwise `null`. |
-| `budget.adapter_capabilities.provider_stop.verified` | `false` | Boolean adapter assertion that a matching provider stop primitive is available. |
-| `budget.adapter_capabilities.provider_stop.evidence_id` | `null` | Non-empty evidence ID when verified; otherwise `null`. |
 
 Any measurement may support an advisory ceiling. `local_enforced` and
 `provider_enforced` require `observed` measurement, a non-empty
-`measurement_source`, verified observed-measurement evidence, and respectively
-verified `local_stop` or `provider_stop` evidence. Every verified capability
-requires its own non-empty `evidence_id`; a source label alone is insufficient.
-Therefore the defaults are advisory and do not promise automatic prevention,
-exact remaining spend, or cancellation of running work.
+`measurement_source`, and a separate trusted `VerifiedCapabilityContext`.
+Capability evidence is intentionally absent from committed, local, and task
+configuration; an `adapter_capabilities` key is rejected as unknown and cannot
+authorize enforcement.
+
+The host or Task 6 capability resolver supplies `capability_context` directly
+to `load_effective_config` or `validate_config`, together with
+`expected_surface` and `expected_version`. The frozen context contains exact
+`surface`, `version`, `provenance`, `evidence_ref`, timezone-aware
+`verified_at` and `expires_at`, `observed_usage`, and booleans for the local and
+provider stop primitives. Provenance is `live_detection` or `acceptance_run`.
+Validation requires an exact surface/version match, non-empty evidence,
+current unexpired timestamps, observed usage, and the stop primitive matching
+the configured enforcement mode. Missing or mismatched trusted context fails
+closed. Therefore the defaults are advisory and do not promise automatic
+prevention, exact remaining spend, or cancellation of running work.
 
 Example one-request override:
 
 ```python
 load_effective_config(root, task_override={"mode": "team-requested", "profile": "quality"})
+```
+
+## Development schema validation
+
+Runtime configuration code uses only the Python standard library. Tests use
+the pinned Draft 2020-12 implementation in `requirements-dev.txt`. On
+PowerShell, install it outside the repository and expose only that temporary
+target to the test process:
+
+```powershell
+$schemaDeps = Join-Path $env:TEMP 'optimal-challenge-jsonschema-4.25.1'
+python -m pip install --disable-pip-version-check --target $schemaDeps -r requirements-dev.txt
+$env:PYTHONPATH = $schemaDeps
+python -m unittest -v tests.validation.test_orchestration_config
 ```
 
 ## Deliberately retained literals

@@ -107,8 +107,7 @@
         "measurement",
         "enforcement",
         "measurement_source",
-        "soft_threshold",
-        "adapter_capabilities"
+        "soft_threshold"
       ],
       "properties": {
         "unit": {
@@ -119,17 +118,7 @@
         "measurement": {"type": "string", "enum": ["unavailable", "estimated", "observed"]},
         "enforcement": {"type": "string", "enum": ["advisory", "local_enforced", "provider_enforced"]},
         "measurement_source": {"type": ["string", "null"]},
-        "soft_threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
-        "adapter_capabilities": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["observed_measurement", "local_stop", "provider_stop"],
-          "properties": {
-            "observed_measurement": {"$ref": "#/$defs/capabilityEvidence"},
-            "local_stop": {"$ref": "#/$defs/capabilityEvidence"},
-            "provider_stop": {"$ref": "#/$defs/capabilityEvidence"}
-          }
-        }
+        "soft_threshold": {"type": ["number", "null"], "exclusiveMinimum": 0}
       },
       "allOf": [
         {
@@ -137,13 +126,7 @@
           "then": {
             "properties": {
               "measurement": {"const": "observed"},
-              "measurement_source": {"type": "string", "minLength": 1},
-              "adapter_capabilities": {
-                "properties": {
-                  "observed_measurement": {"$ref": "#/$defs/verifiedCapabilityEvidence"},
-                  "local_stop": {"$ref": "#/$defs/verifiedCapabilityEvidence"}
-                }
-              }
+              "measurement_source": {"type": "string", "minLength": 1}
             }
           }
         },
@@ -152,13 +135,7 @@
           "then": {
             "properties": {
               "measurement": {"const": "observed"},
-              "measurement_source": {"type": "string", "minLength": 1},
-              "adapter_capabilities": {
-                "properties": {
-                  "observed_measurement": {"$ref": "#/$defs/verifiedCapabilityEvidence"},
-                  "provider_stop": {"$ref": "#/$defs/verifiedCapabilityEvidence"}
-                }
-              }
+              "measurement_source": {"type": "string", "minLength": 1}
             }
           }
         }
@@ -168,45 +145,36 @@
   "allOf": [
     {
       "if": {"properties": {"profile": {"const": "economy"}}},
-      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 3}}}}}
+      "then": {
+        "properties": {
+          "objective_weights": {
+            "const": {"quality": 0.35, "cost": 0.35, "latency": 0.10, "attention": 0.10, "rework": 0.10}
+          },
+          "team_limits": {"properties": {"delegation_margin": {"const": 3}}}
+        }
+      }
     },
     {
       "if": {"properties": {"profile": {"const": "balanced"}}},
-      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 1}}}}}
+      "then": {
+        "properties": {
+          "objective_weights": {
+            "const": {"quality": 0.45, "cost": 0.20, "latency": 0.10, "attention": 0.10, "rework": 0.15}
+          },
+          "team_limits": {"properties": {"delegation_margin": {"const": 1}}}
+        }
+      }
     },
     {
       "if": {"properties": {"profile": {"const": "quality"}}},
-      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 1}}}}}
-    }
-  ],
-  "$defs": {
-    "capabilityEvidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["verified", "evidence_id"],
-      "properties": {
-        "verified": {"type": "boolean"},
-        "evidence_id": {"type": ["string", "null"], "minLength": 1}
-      },
-      "oneOf": [
-        {
-          "properties": {"verified": {"const": false}, "evidence_id": {"type": "null"}}
-        },
-        {
-          "properties": {
-            "verified": {"const": true},
-            "evidence_id": {"type": "string", "minLength": 1}
-          }
+      "then": {
+        "properties": {
+          "objective_weights": {
+            "const": {"quality": 0.50, "cost": 0.10, "latency": 0.05, "attention": 0.10, "rework": 0.25}
+          },
+          "team_limits": {"properties": {"delegation_margin": {"const": 1}}}
         }
-      ]
-    },
-    "verifiedCapabilityEvidence": {
-      "type": "object",
-      "properties": {
-        "verified": {"const": true},
-        "evidence_id": {"type": "string", "minLength": 1}
-      },
-      "required": ["verified", "evidence_id"]
+      }
     }
-  }
+  ]
 }

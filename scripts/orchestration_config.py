@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -19,6 +21,21 @@ PROFILE_DELEGATION_MARGINS: dict[str, int] = {
     "quality": 1,
     "custom": 1,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedCapabilityContext:
+    """Trusted, time-bounded adapter evidence kept outside user configuration."""
+
+    surface: str
+    version: str
+    provenance: str
+    evidence_ref: str
+    verified_at: datetime
+    expires_at: datetime
+    observed_usage: bool
+    local_stop_primitive: bool
+    provider_stop_primitive: bool
 
 BUILT_IN_DEFAULTS: dict[str, Any] = {
     "schema_version": 1,
@@ -60,11 +77,6 @@ BUILT_IN_DEFAULTS: dict[str, Any] = {
         "enforcement": "advisory",
         "measurement_source": None,
         "soft_threshold": None,
-        "adapter_capabilities": {
-            "observed_measurement": {"verified": False, "evidence_id": None},
-            "local_stop": {"verified": False, "evidence_id": None},
-            "provider_stop": {"verified": False, "evidence_id": None},
-        },
     },
 }
 
@@ -76,10 +88,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "$.verification": set(BUILT_IN_DEFAULTS["verification"]),
     "$.persistence_privacy": set(BUILT_IN_DEFAULTS["persistence_privacy"]),
     "$.budget": set(BUILT_IN_DEFAULTS["budget"]),
-    "$.budget.adapter_capabilities": {"observed_measurement", "local_stop", "provider_stop"},
-    "$.budget.adapter_capabilities.observed_measurement": {"verified", "evidence_id"},
-    "$.budget.adapter_capabilities.local_stop": {"verified", "evidence_id"},
-    "$.budget.adapter_capabilities.provider_stop": {"verified", "evidence_id"},
 }
 
 
@@ -136,9 +144,20 @@ def _validated_candidate(
     config: Mapping[str, Any],
     source: str,
     detected_host_max: int | None,
+    capability_context: VerifiedCapabilityContext | None,
+    expected_surface: str | None,
+    expected_version: str | None,
+    now: datetime | None,
 ) -> dict[str, Any]:
     candidate = deepcopy(dict(config))
-    errors = validate_config(candidate, detected_host_max=detected_host_max)
+    errors = validate_config(
+        candidate,
+        detected_host_max=detected_host_max,
+        capability_context=capability_context,
+        expected_surface=expected_surface,
+        expected_version=expected_version,
+        now=now,
+    )
     if errors:
         raise ValueError(f"Invalid orchestration configuration from {source}:\n- " + "\n- ".join(errors))
     return candidate
@@ -148,10 +167,21 @@ def load_effective_config(
     root: Path,
     task_override: Mapping[str, Any] | None = None,
     detected_host_max: int | None = None,
+    *,
+    capability_context: VerifiedCapabilityContext | None = None,
+    expected_surface: str | None = None,
+    expected_version: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Load built-ins, committed config, ignored local config, then task overrides."""
     root = Path(root)
-    config = _validated_candidate(BUILT_IN_DEFAULTS, "built-in defaults", detected_host_max)
+    validation_context = (capability_context, expected_surface, expected_version, now)
+    config = _validated_candidate(
+        BUILT_IN_DEFAULTS,
+        "built-in defaults",
+        detected_host_max,
+        *validation_context,
+    )
     for path, source in [
         (root / "config" / "orchestration.json", "config/orchestration.json"),
         (
@@ -161,12 +191,12 @@ def load_effective_config(
     ]:
         if path.is_file():
             candidate = _merge_layer(config, _read_object(path))
-            config = _validated_candidate(candidate, source, detected_host_max)
+            config = _validated_candidate(candidate, source, detected_host_max, *validation_context)
     if task_override is not None:
         if not isinstance(task_override, Mapping):
             raise TypeError("task_override must be a mapping or None")
         candidate = _merge_layer(config, task_override)
-        config = _validated_candidate(candidate, "task_override", detected_host_max)
+        config = _validated_candidate(candidate, "task_override", detected_host_max, *validation_context)
     return config
 
 
@@ -178,7 +208,71 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def validate_config(config: Mapping[str, Any], detected_host_max: int | None = None) -> list[str]:
+def _capability_context_errors(
+    context: VerifiedCapabilityContext | None,
+    enforcement: str,
+    expected_surface: str | None,
+    expected_version: str | None,
+    now: datetime | None,
+) -> list[str]:
+    path = "$context.capabilities"
+    if not isinstance(context, VerifiedCapabilityContext):
+        return [f"{path}: enforced limits require trusted adapter capability context"]
+
+    errors: list[str] = []
+    if not isinstance(expected_surface, str) or not expected_surface.strip():
+        errors.append(f"{path}.expected_surface: enforced limits require the exact active surface")
+    elif context.surface != expected_surface:
+        errors.append(f"{path}.surface: {context.surface!r} does not match {expected_surface!r}")
+    if not isinstance(expected_version, str) or not expected_version.strip():
+        errors.append(f"{path}.expected_version: enforced limits require the exact active version")
+    elif context.version != expected_version:
+        errors.append(f"{path}.version: {context.version!r} does not match {expected_version!r}")
+    if not isinstance(context.provenance, str) or context.provenance not in {
+        "live_detection",
+        "acceptance_run",
+    }:
+        errors.append(f"{path}.provenance: must be live_detection or acceptance_run")
+    if not isinstance(context.evidence_ref, str) or not context.evidence_ref.strip():
+        errors.append(f"{path}.evidence_ref: must cite non-empty trusted evidence")
+
+    checked_at = now if now is not None else datetime.now(timezone.utc)
+    datetimes = {
+        "verified_at": context.verified_at,
+        "expires_at": context.expires_at,
+        "now": checked_at,
+    }
+    aware = True
+    for name, value in datetimes.items():
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            errors.append(f"{path}.{name}: must be a timezone-aware datetime")
+            aware = False
+    if aware:
+        if context.expires_at <= context.verified_at:
+            errors.append(f"{path}.expires_at: must be later than verified_at")
+        if context.verified_at > checked_at:
+            errors.append(f"{path}.verified_at: cannot be in the future")
+        if context.expires_at <= checked_at:
+            errors.append(f"{path}.expires_at: capability evidence is expired")
+
+    if context.observed_usage is not True:
+        errors.append(f"{path}.observed_usage: enforced limits require observed usage")
+    if enforcement == "local_enforced" and context.local_stop_primitive is not True:
+        errors.append(f"{path}.local_stop_primitive: local stop primitive is not verified")
+    if enforcement == "provider_enforced" and context.provider_stop_primitive is not True:
+        errors.append(f"{path}.provider_stop_primitive: provider stop primitive is not verified")
+    return errors
+
+
+def validate_config(
+    config: Mapping[str, Any],
+    detected_host_max: int | None = None,
+    *,
+    capability_context: VerifiedCapabilityContext | None = None,
+    expected_surface: str | None = None,
+    expected_version: str | None = None,
+    now: datetime | None = None,
+) -> list[str]:
     """Return path-qualified structural and cross-field validation errors."""
     errors: list[str] = []
     if not isinstance(config, Mapping):
@@ -331,44 +425,20 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
         )
         if source is not None and (not isinstance(source, str) or not source.strip()):
             errors.append("$.budget.measurement_source: must be null or a non-empty string")
-        adapter = object_at("$.budget.adapter_capabilities", budget.get("adapter_capabilities"))
-        verified_capabilities: set[str] = set()
-        if adapter is not None:
-            for capability in ["observed_measurement", "local_stop", "provider_stop"]:
-                capability_path = f"$.budget.adapter_capabilities.{capability}"
-                record = object_at(capability_path, adapter.get(capability))
-                if record is None:
-                    continue
-                verified = record.get("verified")
-                evidence_id = record.get("evidence_id")
-                if not isinstance(verified, bool):
-                    errors.append(f"{capability_path}.verified: must be a boolean")
-                if evidence_id is not None and (not isinstance(evidence_id, str) or not evidence_id.strip()):
-                    errors.append(f"{capability_path}.evidence_id: must be null or a non-empty string")
-                if verified is True:
-                    if isinstance(evidence_id, str) and evidence_id.strip():
-                        verified_capabilities.add(capability)
-                    else:
-                        errors.append(f"{capability_path}.evidence_id: verified capability requires evidence")
-                elif verified is False and evidence_id is not None:
-                    errors.append(f"{capability_path}.evidence_id: unverified capability must use null")
-
         if enforcement_valid and enforcement in {"local_enforced", "provider_enforced"}:
             if measurement != "observed":
                 errors.append("$.budget.enforcement: enforced limits require observed measurement")
             if not isinstance(source, str) or not source.strip():
                 errors.append("$.budget.measurement_source: enforced limits require a verified source")
-            if "observed_measurement" not in verified_capabilities:
-                errors.append(
-                    "$.budget.adapter_capabilities.observed_measurement: "
-                    "enforced limits require verified observed-measurement evidence"
+            errors.extend(
+                _capability_context_errors(
+                    capability_context,
+                    enforcement,
+                    expected_surface,
+                    expected_version,
+                    now,
                 )
-            stop_capability = "local_stop" if enforcement == "local_enforced" else "provider_stop"
-            if stop_capability not in verified_capabilities:
-                errors.append(
-                    f"$.budget.adapter_capabilities.{stop_capability}: "
-                    f"{enforcement} requires verified matching stop-primitive evidence"
-                )
+            )
         if soft is not None and (not _is_number(soft) or soft <= 0):
             errors.append("$.budget.soft_threshold: must be null or a positive number")
         if soft is not None and limit is None:

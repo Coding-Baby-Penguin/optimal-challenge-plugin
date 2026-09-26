@@ -5,9 +5,15 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from copy import deepcopy
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts.orchestration_config import load_effective_config, validate_config
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+
+from scripts.orchestration_config import VerifiedCapabilityContext, load_effective_config, validate_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,7 +101,7 @@ class OrchestrationConfigTests(unittest.TestCase):
             errors,
         )
 
-    def test_enforced_budget_requires_matching_adapter_capability_evidence(self):
+    def test_enforced_budget_requires_trusted_matching_capability_context(self):
         config = load_effective_config(ROOT)
         config["budget"].update(
             {
@@ -104,42 +110,122 @@ class OrchestrationConfigTests(unittest.TestCase):
                 "measurement": "observed",
                 "enforcement": "provider_enforced",
                 "measurement_source": "provider usage counter",
-                "adapter_capabilities": {
-                    "observed_measurement": {"verified": True, "evidence_id": "acceptance:usage-17"},
-                    "local_stop": {"verified": False, "evidence_id": None},
-                    "provider_stop": {"verified": False, "evidence_id": None},
-                },
             }
         )
-
-        missing_stop_errors = validate_config(config)
-        self.assertTrue(
-            any("$.budget.adapter_capabilities.provider_stop" in error for error in missing_stop_errors),
-            missing_stop_errors,
+        now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+        trusted = VerifiedCapabilityContext(
+            surface="codex-local",
+            version="1.2.3",
+            provenance="live_detection",
+            evidence_ref="acceptance:capability-17",
+            verified_at=now - timedelta(minutes=5),
+            expires_at=now + timedelta(minutes=55),
+            observed_usage=True,
+            local_stop_primitive=False,
+            provider_stop_primitive=True,
         )
 
-        config["budget"]["adapter_capabilities"]["provider_stop"] = {
-            "verified": True,
-            "evidence_id": "acceptance:provider-stop-8",
+        missing_context_errors = validate_config(config)
+        self.assertTrue(
+            any("$context.capabilities" in error for error in missing_context_errors),
+            missing_context_errors,
+        )
+        self.assertEqual(
+            validate_config(
+                config,
+                capability_context=trusted,
+                expected_surface="codex-local",
+                expected_version="1.2.3",
+                now=now,
+            ),
+            [],
+        )
+        loaded = load_effective_config(
+            ROOT,
+            task_override={
+                "budget": {
+                    "unit": "tokens",
+                    "limit": 1000,
+                    "measurement": "observed",
+                    "enforcement": "provider_enforced",
+                    "measurement_source": "provider usage counter",
+                }
+            },
+            capability_context=trusted,
+            expected_surface="codex-local",
+            expected_version="1.2.3",
+            now=now,
+        )
+        self.assertEqual(loaded["budget"]["enforcement"], "provider_enforced")
+
+        invalid_contexts = {
+            "surface": replace(trusted, surface="claude-local"),
+            "version": replace(trusted, version="0.9"),
+            "provenance": replace(trusted, provenance="policy_only"),
+            "provenance_type": replace(trusted, provenance={}),
+            "expired": replace(trusted, expires_at=now),
+            "future": replace(trusted, verified_at=now + timedelta(seconds=1)),
+            "usage": replace(trusted, observed_usage=False),
+            "stop": replace(trusted, provider_stop_primitive=False),
         }
-        self.assertEqual(validate_config(config), [])
+        for label, context in invalid_contexts.items():
+            with self.subTest(label=label):
+                errors = validate_config(
+                    config,
+                    capability_context=context,
+                    expected_surface="codex-local",
+                    expected_version="1.2.3",
+                    now=now,
+                )
+                self.assertTrue(any("$context.capabilities" in error for error in errors), errors)
 
         config["budget"]["enforcement"] = "local_enforced"
-        mismatched_stop_errors = validate_config(config)
         self.assertTrue(
-            any("$.budget.adapter_capabilities.local_stop" in error for error in mismatched_stop_errors),
-            mismatched_stop_errors,
+            any(
+                "local stop primitive" in error
+                for error in validate_config(
+                    config,
+                    capability_context=trusted,
+                    expected_surface="codex-local",
+                    expected_version="1.2.3",
+                    now=now,
+                )
+            )
         )
 
-        config["budget"]["adapter_capabilities"]["local_stop"] = {
-            "verified": True,
-            "evidence_id": None,
+    def test_user_configuration_cannot_supply_capability_evidence(self):
+        untrusted = {
+            "budget": {
+                "adapter_capabilities": {
+                    "observed_measurement": {"verified": True, "evidence_id": "self-asserted"},
+                    "provider_stop": {"verified": True, "evidence_id": "self-asserted"},
+                }
+            }
         }
-        missing_evidence_errors = validate_config(config)
-        self.assertTrue(
-            any("$.budget.adapter_capabilities.local_stop.evidence_id" in error for error in missing_evidence_errors),
-            missing_evidence_errors,
-        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            (root / ".optimal-challenge").mkdir()
+            committed = root / "config" / "orchestration.json"
+            local = root / ".optimal-challenge" / "orchestration.local.json"
+
+            committed.write_text(json.dumps(untrusted), encoding="utf-8")
+            with self.assertRaises(ValueError) as committed_error:
+                load_effective_config(root)
+            self.assertIn("$.budget.adapter_capabilities", str(committed_error.exception))
+
+            committed.write_text("{}", encoding="utf-8")
+            local.write_text(json.dumps(untrusted), encoding="utf-8")
+            with self.assertRaises(ValueError) as local_error:
+                load_effective_config(root)
+            self.assertIn("$.budget.adapter_capabilities", str(local_error.exception))
+
+            local.unlink()
+            with self.assertRaises(ValueError) as task_error:
+                load_effective_config(root, task_override=untrusted)
+            self.assertIn("$.budget.adapter_capabilities", str(task_error.exception))
+            self.assertIn("unknown configuration key", str(task_error.exception))
 
     def test_custom_weights_sum_to_one(self):
         config = load_effective_config(ROOT)
@@ -242,6 +328,41 @@ class OrchestrationConfigTests(unittest.TestCase):
                 load_effective_config(root)
             self.assertIn("config/orchestration.json", str(committed_error.exception))
             self.assertIn("$.team_limits.delegation_margin", str(committed_error.exception))
+
+    def test_draft_2020_12_schema_enforces_named_profile_weights(self):
+        schema = json.loads((ROOT / "config" / "orchestration.schema.json").read_text(encoding="utf-8"))
+        committed = json.loads((ROOT / "config" / "orchestration.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        validator.validate(committed)
+
+        named_profiles = {
+            "economy": (
+                {"quality": 0.35, "cost": 0.35, "latency": 0.10, "attention": 0.10, "rework": 0.10},
+                3,
+            ),
+            "balanced": (
+                {"quality": 0.45, "cost": 0.20, "latency": 0.10, "attention": 0.10, "rework": 0.15},
+                1,
+            ),
+            "quality": (
+                {"quality": 0.50, "cost": 0.10, "latency": 0.05, "attention": 0.10, "rework": 0.25},
+                1,
+            ),
+        }
+        for profile, (weights, margin) in named_profiles.items():
+            with self.subTest(profile=profile):
+                valid = deepcopy(committed)
+                valid["profile"] = profile
+                valid["objective_weights"] = weights
+                valid["team_limits"]["delegation_margin"] = margin
+                validator.validate(valid)
+
+                adversarial = deepcopy(valid)
+                adversarial["objective_weights"]["quality"] -= 0.05
+                adversarial["objective_weights"]["cost"] += 0.05
+                with self.assertRaises(ValidationError):
+                    validator.validate(adversarial)
 
     def test_exact_specialists_uses_minimum_host_limit(self):
         config = load_effective_config(
