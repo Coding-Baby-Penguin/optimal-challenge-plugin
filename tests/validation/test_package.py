@@ -117,6 +117,133 @@ class PackageIndependentReview(unittest.TestCase):
         ]:
             self.assertIn(phrase, policy)
 
+    def test_router_lazily_exposes_agent_team_policy_after_direct_gate(self):
+        router = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").lower()
+        references = [
+            "premise-validation.md",
+            "team-orchestration.md",
+            "team-continuity.md",
+            "cost-quality-routing.md",
+        ]
+        for reference in references:
+            self.assertIn(f"references/{reference}", router)
+            self.assertTrue((SKILL_DIR / "references" / reference).is_file(), reference)
+
+        direct_gate = router.index("stable, single-step, and low-risk")
+        premise_gate = router.index("premise")
+        self.assertLess(direct_gate, premise_gate)
+        self.assertIn("only after", router)
+        self.assertIn("real multi-workstream", router)
+        self.assertIn("explicit", router)
+        self.assertNotIn("always create a team", router)
+        self.assertNotIn("always ask which profile", router)
+
+    def test_premise_policy_optimizes_question_quality(self):
+        text = (SKILL_DIR / "references" / "premise-validation.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "premiserisk",
+            "questionvalue",
+            "wrongnesslikelihoodrating",
+            "expectedreworkavoided",
+            "userattentioncost",
+            "investigate",
+            "reversible default",
+            "decision id",
+            "contradictory evidence",
+            "question bundle",
+            "safe work",
+        ]:
+            self.assertIn(phrase, text)
+        self.assertIn("premiserisk >= 4", text)
+        self.assertIn("questionvalue > 0", text)
+        self.assertIn("never re-ask", text)
+
+    def test_team_policy_preserves_invocation_authority_and_budget_truth(self):
+        orchestration = (SKILL_DIR / "references" / "team-orchestration.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "inline-only",
+            "team-requested",
+            "exact specialist",
+            "0 to 32",
+            "min(32, detected_host_max)",
+            "strong-benefit requirement",
+            "ambiguous",
+            "one concise",
+            "coordinator",
+            "sole user-facing",
+            "cannot ask the user",
+            "cannot expand scope",
+            "cannot spawn",
+            "task-capsule.yaml",
+            "return-capsule.yaml",
+            "advisory ceiling",
+            "observed",
+            "estimated",
+            "unavailable",
+            "integration reserve",
+            "mandatory-review reserve",
+            "workers cannot transfer",
+            "unfinished",
+            "profile is surfaced only",
+        ]:
+            self.assertIn(phrase, orchestration)
+        self.assertIn("config/orchestration.json", orchestration)
+        self.assertIn(".optimal-challenge/orchestration.local.json", orchestration)
+        self.assertIn("system", orchestration)
+        self.assertIn("current-request", orchestration)
+        self.assertNotIn("hard budget", orchestration)
+
+    def test_team_continuity_and_cost_quality_policy_match_calculation_contracts(self):
+        continuity = (SKILL_DIR / "references" / "team-continuity.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "resume",
+            "rehydrate",
+            "fresh",
+            "logical teammate",
+            "not the same thing as a retained full conversation",
+            "disposable runtime state",
+            "project-state.md",
+            "source files",
+            "independence",
+        ]:
+            self.assertIn(phrase, continuity)
+
+        routing = (SKILL_DIR / "references" / "cost-quality-routing.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "d(t)",
+            "b_parallel",
+            "c_review_rework",
+            "strong benefit",
+            "economy",
+            "balanced",
+            "quality",
+            "custom",
+            "totaljobcost",
+            "criticalpathlatency",
+            "userinterruptioncost",
+            "expectedreworkrisk",
+            "observed",
+            "estimated",
+            "unknown",
+            "ties stay inline",
+        ]:
+            self.assertIn(phrase, routing)
+        self.assertIn("never delegate merely because", routing)
+
+    def test_selective_review_policy_blocks_unavailable_mandatory_review(self):
+        text = (SKILL_DIR / "references" / "verification.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "reviewvalue",
+            "p(defect)",
+            "reviewcost",
+            "mandatory independent review",
+            "blocked",
+            "compensating oracle",
+            "explicitly accepts",
+            "authoritative inputs",
+        ]:
+            self.assertIn(phrase, text)
+
     def test_single_project_state_template_has_resume_and_development_path(self):
         project_state = (SKILL_DIR / "templates" / "PROJECT-STATE.md").read_text().lower()
         for field in [
@@ -336,6 +463,18 @@ class PackageIndependentReview(unittest.TestCase):
         for required in ["direct-01", "direct-04", "plan-01", "plan-02", "skill-01", "agent-03", "ask-03", "context-03", "context-04", "config-01", "config-02", "docs-01", "failure-01", "failure-02", "failure-03", "failure-04", "output-02", "security-01", "security-02", "structure-01", "structure-02", "evolution-02", "hook-02", "stagnation-01"]:
             self.assertIn(required, ids)
         self.assertGreaterEqual(len(scenarios), 25)
+
+    def test_scenario_matrix_covers_agent_team_policy_boundaries(self):
+        scenarios = json.loads((ROOT / "tests" / "scenarios.json").read_text(encoding="utf-8"))
+        ids = {scenario["id"] for scenario in scenarios}
+        required = {
+            "premise-investigate-01", "premise-default-01", "premise-ask-01",
+            "invocation-inline-01", "invocation-auto-01", "invocation-team-01",
+            "invocation-exact-01", "invocation-conflict-01", "continuity-resume-01",
+            "continuity-rehydrate-01", "continuity-fresh-01", "review-unavailable-01",
+            "budget-advisory-01", "question-settled-01",
+        }
+        self.assertTrue(required <= ids, sorted(required - ids))
 
 
 if __name__ == "__main__":

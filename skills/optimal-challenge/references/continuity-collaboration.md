@@ -14,6 +14,8 @@ After the cheapest useful investigation, collect every currently knowable user d
 
 Follow the bundle with next steps: what happens if the defaults are accepted, how answers change the route, and any safe work that can continue meanwhile. New evidence may justify a later bundle; do not drip questions that could have been identified together.
 
+Assign stable decision IDs to material answers. Never re-ask a settled decision without citing new contradictory evidence that invalidates it. Budget or profile belongs in Required decisions only when an active ceiling is reached, the route cannot fit, or the answer changes irreversible work; otherwise use the active/default value without pausing.
+
 ## Reusable snippets
 
 When producing code, commands, configuration, or prompts intended for reuse, use the contract in `templates/REUSABLE-SNIPPET.md`:

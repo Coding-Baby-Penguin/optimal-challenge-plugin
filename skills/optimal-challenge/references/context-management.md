@@ -5,6 +5,8 @@ Treat conversation history as disposable working memory, not canonical project s
 ## Working-set rule
 Each pass receives the minimum sufficient context for its task: goal, relevant constraints, current state, necessary decisions/evidence, capability lease, and return contract.
 
+For team work, carry stable decision IDs and source pointers through the task and teammate capsules. Do not carry full transcripts to simulate identity. Choose resume, rehydrate, or fresh context with `team-continuity.md`, and keep the disposable registry subordinate to authoritative source, tests, and project state.
+
 ## Temperature tiers
 - **HOT:** current task and immediate evidence; load now.
 - **WARM:** goal, constraints, current state, relevant decisions; cheap to reload.
