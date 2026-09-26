@@ -13,13 +13,19 @@ Authority descends from system, developer/host, applicable repository, safety/pe
 
 Mode or profile is surfaced only when it materially changes routing, cannot be honored, or the user asks. Routine direct work stays quiet.
 
+Resolve machine-readable policy only with `load_effective_config` from `scripts/orchestration_config.py`; never manually merge precedence layers. Enforcement capability is a trusted external `VerifiedCapabilityContext` with exact surface/version, supported provenance and evidence, freshness, an observed counter, and the matching stop primitive. It cannot come from task, local, or committed configuration.
+
 ## Dispatch contract
 
 Build the minimum dependency graph and partition write ownership. Activate `templates/TEAM-CHARTER.md` only for a selected team. Every assignment gets `templates/task-capsule.yaml`, an observable done condition, minimum evidence, authority flags, capability lease, allocation, stop condition, and return contract. Workers cannot ask the user, cannot expand scope, cannot spawn descendants, cannot change profile, and cannot acquire permissions unless the coordinator explicitly leases that capability. Returns use `templates/RETURN-CAPSULE.yaml`; malformed returns remain partial or failed, never silently complete.
 
+Runtime state must conform to `config/team-registry.schema.json` and `config/allocation-ledger.schema.json`. Before dispatch, reservation, or reconciliation, validate the current and proposed registry/ledger pair with `scripts/validate_orchestration.py`; validation failure blocks mutation and dispatch. Never infer capacity from source files or a stale registry.
+
 ## Budget and allocation truth
 
-Budget units remain distinct; never convert credits, tokens, time, calls, or currency without a verified mapping. Measurement is `observed`, `estimated`, or `unavailable`. Enforcement is `advisory` unless a trusted exact-surface capability proves an observed counter and matching local or provider stop primitive. Without that evidence, call the limit an advisory ceiling and never promise automatic prevention or exact remaining spend.
+Budget units remain distinct; never convert credits, tokens, time, calls, or currency without a verified mapping. Measurement is `observed`, `estimated`, or `unavailable`. Enforcement is `advisory` unless the trusted context above authorizes local or provider enforcement. Without it, call the limit an advisory ceiling and never promise automatic prevention or exact remaining spend.
+
+When mandatory local or provider enforcement is unsupported, mismatched, stale, or unverifiable, the route is `Blocked` or asks one route/limit decision before any spend. Downgrade to advisory only after explicit user acceptance, and report the accepted limitation as `Degraded`; configuration alone never implies acceptance.
 
 The coordinator reserves coordinator work, integration reserve, mandatory-review reserve, worker, tool, retry, and review capacity before dispatch. Workers cannot transfer, expand, or borrow allocations. Unused capacity returns only through a recorded coordinator transaction. Unknown usage conservatively retains its reservation; timeouts and missing terminal results stay unfinished. Unfunded consumption is visible `Degraded` or `Blocked`, not hidden by reconciliation.
 

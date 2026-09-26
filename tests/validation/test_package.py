@@ -138,6 +138,14 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertNotIn("always create a team", router)
         self.assertNotIn("always ask which profile", router)
 
+        direct_rule = next(
+            line for line in router.splitlines()
+            if line.startswith("2.") and "stable, single-step, and low-risk" in line
+        )
+        for constraint in ["explicit team", "exact-specialist", "independent-review", "non-inline"]:
+            self.assertIn(constraint, direct_rule)
+        self.assertRegex(direct_rule, r"direct.*only when|only when.*direct")
+
     def test_premise_policy_optimizes_question_quality(self):
         text = (SKILL_DIR / "references" / "premise-validation.md").read_text(encoding="utf-8").lower()
         for phrase in [
@@ -192,6 +200,38 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertIn("system", orchestration)
         self.assertIn("current-request", orchestration)
         self.assertNotIn("hard budget", orchestration)
+
+    def test_mandatory_enforcement_requires_external_capability_or_stops_before_spend(self):
+        text = (SKILL_DIR / "references" / "team-orchestration.md").read_text(encoding="utf-8").lower()
+        for field in [
+            "verifiedcapabilitycontext",
+            "exact surface/version",
+            "provenance",
+            "evidence",
+            "freshness",
+            "observed counter",
+            "matching stop primitive",
+        ]:
+            self.assertIn(field, text)
+        self.assertIn("cannot come from task, local, or committed configuration", text)
+        self.assertRegex(text, r"mandatory[^.]+enforcement[^.]+(?:blocked|one route/limit decision)[^.]+before any spend")
+        self.assertRegex(text, r"advisory[^.]+only after[^.]+explicit user acceptance")
+
+    def test_team_policy_requires_executable_loader_and_state_validation(self):
+        text = (SKILL_DIR / "references" / "team-orchestration.md").read_text(encoding="utf-8").lower()
+        for contract in [
+            "scripts/orchestration_config.py",
+            "load_effective_config",
+            "config/team-registry.schema.json",
+            "config/allocation-ledger.schema.json",
+            "scripts/validate_orchestration.py",
+        ]:
+            self.assertIn(contract, text)
+        self.assertIn("never manually merge", text)
+        self.assertRegex(
+            text,
+            r"before dispatch, reservation, or reconciliation[^.]+scripts/validate_orchestration\.py",
+        )
 
     def test_team_continuity_and_cost_quality_policy_match_calculation_contracts(self):
         continuity = (SKILL_DIR / "references" / "team-continuity.md").read_text(encoding="utf-8").lower()
@@ -473,8 +513,51 @@ class PackageIndependentReview(unittest.TestCase):
             "invocation-exact-01", "invocation-conflict-01", "continuity-resume-01",
             "continuity-rehydrate-01", "continuity-fresh-01", "review-unavailable-01",
             "budget-advisory-01", "question-settled-01",
+            "direct-explicit-team-01", "budget-mandatory-unsupported-01",
+            "budget-mandatory-accepted-advisory-01", "invocation-ambiguous-team-01",
+            "continuity-stale-failed-01",
         }
         self.assertTrue(required <= ids, sorted(required - ids))
+
+    def test_agent_team_pressure_scenarios_encode_trigger_route_and_modules(self):
+        scenarios = {
+            scenario["id"]: scenario
+            for scenario in json.loads((ROOT / "tests" / "scenarios.json").read_text(encoding="utf-8"))
+        }
+        contracts = {
+            "direct-explicit-team-01": {
+                "tokens": ["trivial", "exactly two specialists"],
+                "expect": "explicit-non-inline-constraint-bypasses-direct-fast-path",
+                "modules": {"team-orchestration", "cost-quality-routing"},
+            },
+            "budget-mandatory-unsupported-01": {
+                "tokens": ["mandatory", "no verified stop primitive", "before spending"],
+                "expect": "block-or-ask-one-route-limit-decision-before-spend",
+                "modules": {"team-orchestration", "failure-visibility"},
+            },
+            "budget-mandatory-accepted-advisory-01": {
+                "tokens": ["explicitly accept", "advisory"],
+                "expect": "degraded-advisory-route-after-explicit-acceptance",
+                "modules": {"team-orchestration", "failure-visibility"},
+            },
+            "invocation-ambiguous-team-01": {
+                "tokens": ["team of three", "cost"],
+                "expect": "resolve-from-context-or-ask-one-material-count-question",
+                "modules": {"team-orchestration"},
+            },
+            "continuity-stale-failed-01": {
+                "tokens": ["stale", "failed", "resume"],
+                "expect": "validate-quarantine-and-rehydrate-fresh-or-block-not-blind-resume",
+                "modules": {"team-continuity", "failure-visibility"},
+            },
+        }
+        for scenario_id, contract in contracts.items():
+            self.assertIn(scenario_id, scenarios)
+            scenario = scenarios[scenario_id]
+            prompt = scenario["prompt"].lower()
+            self.assertTrue(all(token in prompt for token in contract["tokens"]), scenario_id)
+            self.assertEqual(scenario["expect"], contract["expect"])
+            self.assertTrue(contract["modules"] <= set(scenario["modules"]), scenario_id)
 
 
 if __name__ == "__main__":

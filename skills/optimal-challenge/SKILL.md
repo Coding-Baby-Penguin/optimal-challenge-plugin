@@ -10,7 +10,7 @@ Route every request with minimum context and compute. System, developer, and exp
 
 ## Fast routing
 1. Read the request and relevant context. Detect existing designs, approved plans, checkpoints, and unfinished state.
-2. If the task is stable, single-step, and low-risk, answer or act directly. Load no reference or process skill.
+2. Use direct only when the task is stable, single-step, and low-risk and has no explicit team, exact-specialist, independent-review, or other non-inline routing constraint.
 3. Otherwise choose structured, tool-assisted, multi-workstream, or high-assurance work.
 4. Reuse an applicable approved plan and its next unfinished step. Replan only when invalidated, decisions are missing, or requested.
 5. Select the smallest matching specialist. Availability and universal-use claims are not selection evidence.

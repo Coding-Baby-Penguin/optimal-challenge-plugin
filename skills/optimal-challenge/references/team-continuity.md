@@ -12,6 +12,8 @@ Pass only the minimum goal, constraints, relevant decision IDs, source and test 
 
 The registry under `.optimal-challenge/` is disposable runtime state. Source files, repository state, tests, explicit decisions, and `docs/PROJECT-STATE.md` outrank it. Promote durable facts and decisions, not runtime histories. A stale, corrupt, torn, or conflicting registry is quarantined and reconstructed from authoritative task/return capsules and evidence; never merge conflicting logical IDs.
 
+A stale native handle, failed teammate without new evidence, invalid registry/ledger pair, or failed capability check must not be resumed blindly. Validate and quarantine first, then rehydrate from sufficient authoritative evidence, choose a fresh teammate, or report `Blocked` when reconstruction is insufficient.
+
 Trust counters require cited independent-review evidence. A familiar teammate does not satisfy an independence requirement. Refresh or create a reviewer without inheriting the implementation worker's conclusions as facts.
 
 Before a quota, session, or context boundary, record unresolved assignments and an exact resume action in `docs/PROJECT-STATE.md`. If native resume is unavailable, rehydrate when the capsule is sufficient; otherwise rediscover the missing evidence or report `Blocked`.
