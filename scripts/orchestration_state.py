@@ -96,15 +96,26 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
     kind = _required_text(event.get("type"), "$.event.type")
     _required_text(event.get("transaction_id"), "$.event.transaction_id")
     if event_id in result.get("applied_event_ids", []):
-        matching = [item for item in result.get("history", []) if item.get("event_id") == event_id]
+        matching = [item for collection in (result.get("history", []), result.get("failure_history", [])) for item in collection if item.get("event_id") == event_id]
         if len(matching) != 1 or matching[0].get("event_hash") != _canonical_hash(event):
             raise ValueError(f"$.event.event_id: conflicting replay for {event_id!r}")
         return result
 
     if kind == "reconciliation_failure":
+        reason = _required_text(event.get("reason"), "$.event.reason")
         result["status"] = "degraded"
         result["recovery_required"] = True
-        result["recovery_error"] = _required_text(event.get("reason"), "$.event.reason")
+        result["recovery_error"] = reason
+        result.setdefault("failure_history", []).append({
+            "event_id": event_id,
+            "type": kind,
+            "transaction_id": event["transaction_id"],
+            "transaction_version": result["transaction_version"],
+            "reconciliation_version": result["reconciliation_version"],
+            "event_hash": _canonical_hash(event),
+            "reason": reason,
+        })
+        result.setdefault("applied_event_ids", []).append(event_id)
         return result
 
     reservations = result.setdefault("reservations", {})
@@ -118,8 +129,22 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             raise ValueError(f"$.event.reservation_id: {reservation_id!r} already exists")
         if amount > result.get("available", -1):
             raise ValueError("$.event.amount: reservation exceeds available funded capacity")
-        if any(item.get("assignment_id") == assignment_id and item.get("state") in {"reserved", "running", "unknown"} for item in reservations.values()):
-            raise ValueError(f"$.event.assignment_id: {assignment_id!r} already has an active reservation")
+        if any(item.get("assignment_id") == assignment_id for item in reservations.values()):
+            message = "retry attempts require a unique attempt assignment ID" if kind == "retry_start" else f"{assignment_id!r} already has a reservation"
+            raise ValueError(f"$.event.assignment_id: {message}")
+        retry_of = event.get("retry_of_reservation_id")
+        attempt = event.get("attempt", 1)
+        if kind == "retry_start":
+            retry_of = _required_text(retry_of, "$.event.retry_of_reservation_id")
+            prior = reservations.get(retry_of)
+            if not isinstance(prior, Mapping):
+                raise ValueError("$.event.retry_of_reservation_id: must identify an earlier reservation")
+            if prior.get("state") not in TERMINAL_STATES:
+                raise ValueError("$.event.retry_of_reservation_id: prior attempt must be terminal before retry")
+            if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt != prior.get("attempt", 0) + 1:
+                raise ValueError("$.event.attempt: retry attempt must increment the prior attempt")
+        elif retry_of is not None or attempt != 1:
+            raise ValueError("$.event: initial reservations require attempt 1 and no retry lineage")
         measurement = event.get("measurement", result.get("measurement"))
         if measurement not in {"observed", "estimated", "unavailable"}:
             raise ValueError("$.event.measurement: invalid measurement")
@@ -127,8 +152,9 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             "reservation_id": reservation_id,
             "assignment_id": assignment_id,
             "logical_teammate_id": event.get("logical_teammate_id"),
+            "retry_of_reservation_id": retry_of,
             "kind": "retry" if kind == "retry_start" else event.get("kind", "worker"),
-            "attempt": event.get("attempt", 1),
+            "attempt": attempt,
             "initial_reserved": amount, "active_reserved": amount,
             "funded_consumed": 0, "funded_reservation_overrun": 0,
             "unfunded_consumed": 0, "released_unused": 0,
@@ -157,10 +183,10 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
         reservation["released_unused"] += reservation["active_reserved"]
         reservation["active_reserved"] = 0
         reservation["state"] = "cancelled"
-        result.setdefault("reset_history", []).append({"event_id": event_id, "transaction_id": event["transaction_id"], "reason": reason, "authority": authority, "evidence_ref": evidence_ref, "prior": prior})
         result["status"] = "degraded"
         result["accuracy_marker"] = "advisory_reset"
         _advance(result, event, reconciliation=True)
+        result.setdefault("reset_history", []).append({"event_id": event_id, "transaction_id": event["transaction_id"], "transaction_version": result["transaction_version"], "reconciliation_version": result["reconciliation_version"], "reason": reason, "authority": authority, "evidence_ref": evidence_ref, "prior": prior})
         _recompute(result)
         return result
 
@@ -178,7 +204,9 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
         other_committed = sum(item["funded_consumed"] + item["active_reserved"] for key, item in reservations.items() if key != reservation_id)
         _settle(reservation, usage, reservation.get("state", "complete") if reservation.get("state") in TERMINAL_STATES else "complete", measurement, terminal, result["ceiling"] - other_committed)
         _advance(result, event, reconciliation=True)
-        result.setdefault("reconciliation_history", []).append(_history_record(event, result["transaction_version"]))
+        reconciliation_record = _history_record(event, result["transaction_version"])
+        reconciliation_record["reconciliation_version"] = result["reconciliation_version"]
+        result.setdefault("reconciliation_history", []).append(reconciliation_record)
         _recompute(result)
         return result
 
@@ -191,6 +219,11 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
     measurement = event.get("measurement", reservation.get("measurement", result.get("measurement")))
     terminal = event.get("terminal_evidence")
 
+    if measurement == "unavailable" and target in {"cancel", "timeout"}:
+        reservation["state"] = "unknown"
+        _advance(result, event)
+        _recompute(result)
+        return result
     if target == "timeout" and not terminal:
         reservation["state"] = "unknown"
         _advance(result, event)
@@ -219,7 +252,7 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             _advance(result, event)
             _recompute(result)
             return result
-    state = "cancelled" if target == "cancel" else target
+    state = "cancelled" if target == "cancel" else "failed" if target == "timeout" else target
     other_committed = sum(item["funded_consumed"] + item["active_reserved"] for key, item in reservations.items() if key != reservation_id)
     _settle(reservation, usage, state, measurement, terminal, result["ceiling"] - other_committed)
     _advance(result, event)
@@ -247,7 +280,7 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
         "schema_version", "snapshot_version", "transaction_version", "reconciliation_version",
         "transaction_id", "status", "balances_known", "unit", "ceiling", "measurement",
         "enforcement", "measurement_source", "reserves", *BALANCE_FIELDS, "reservations",
-        "history", "reconciliation_history", "reset_history", "applied_event_ids",
+        "history", "reconciliation_history", "reset_history", "failure_history", "applied_event_ids",
     }
     for key in sorted(registry_required - set(registry)):
         errors.append(f"$.registry.{key}: required key is missing")
@@ -266,8 +299,11 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
     if not all(isinstance(value, Mapping) for value in (evidence, teammates, assignments, reservations)):
         errors.append("$: evidence, teammates, assignments, and reservations must be objects")
         return errors
+    for key, item in evidence.items():
+        if not isinstance(item, Mapping) or item.get("evidence_id") != key:
+            errors.append(f"$.registry.evidence.{key}.evidence_id: must equal its key")
     logical_ids: set[str] = set()
-    active_ids: set[str] = set()
+    active_owners: dict[str, str] = {}
     for key, teammate in teammates.items():
         if not isinstance(teammate, Mapping):
             errors.append(f"$.registry.teammates.{key}: expected an object")
@@ -308,9 +344,10 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
             except ValueError:
                 errors.append(f"$.registry.teammates.{key}.native_handle.expires_at: must be a timezone-aware date-time")
         for assignment_id in teammate.get("active_assignment_ids", []):
-            if assignment_id in active_ids:
+            if assignment_id in active_owners:
                 errors.append(f"$.registry.assignments.{assignment_id}: active assignment is not unique")
-            active_ids.add(assignment_id)
+            else:
+                active_owners[assignment_id] = key
             if assignment_id not in assignments:
                 errors.append(f"$.registry.teammates.{key}.active_assignment_ids: missing assignment {assignment_id!r}")
 
@@ -329,6 +366,18 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
         reservation = reservations.get(reservation_id)
         if not isinstance(reservation, Mapping) or reservation.get("assignment_id") != key:
             errors.append(f"$.registry.assignments.{key}.reservation_id: does not resolve to assignment {key!r}")
+        else:
+            if reservation.get("logical_teammate_id") != assignment.get("logical_teammate_id"):
+                errors.append(f"$.registry.assignments.{key}.logical_teammate_id: does not match reservation logical_teammate_id")
+            if reservation.get("state") != assignment.get("state"):
+                errors.append(f"$.registry.assignments.{key}.state: does not match reservation state")
+        is_active = assignment.get("state") in {"reserved", "running", "unknown"}
+        active_owner = active_owners.get(key)
+        listed_with_owner = active_owner == assignment.get("logical_teammate_id")
+        if is_active != listed_with_owner:
+            errors.append(f"$.registry.assignments.{key}.state: active_assignment_ids membership under the assigned teammate does not match state")
+        if active_owner is not None and active_owner != assignment.get("logical_teammate_id"):
+            errors.append(f"$.registry.assignments.{key}: active assignment is listed under a teammate other than its assigned teammate")
         for ref in assignment.get("evidence_refs", []):
             if ref not in evidence:
                 errors.append(f"$.registry.assignments.{key}.evidence_refs: missing evidence {ref!r}")
@@ -341,6 +390,19 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
                 errors.append(f"$.ledger.reservations.{reservation_key}.assignment_id: assignment {assignment_id!r} has more than one reservation")
             elif isinstance(assignment_id, str):
                 assignment_reservations[assignment_id] = reservation_key
+            assignment = assignments.get(assignment_id)
+            if not isinstance(assignment, Mapping):
+                errors.append(f"$.ledger.reservations.{reservation_key}.assignment_id: orphan reservation references unknown assignment {assignment_id!r}")
+            else:
+                if assignment.get("reservation_id") != reservation_key:
+                    errors.append(f"$.ledger.reservations.{reservation_key}.assignment_id: assignment does not point back to reservation")
+                if assignment.get("logical_teammate_id") != reservation.get("logical_teammate_id"):
+                    errors.append(f"$.ledger.reservations.{reservation_key}.logical_teammate_id: does not match assignment")
+                if assignment.get("state") != reservation.get("state"):
+                    errors.append(f"$.ledger.reservations.{reservation_key}.state: does not match assignment state")
+            for ref in reservation.get("evidence_refs", []):
+                if ref not in evidence:
+                    errors.append(f"$.ledger.reservations.{reservation_key}.evidence_refs: missing evidence {ref!r}")
     history = ledger.get("history", [])
     if isinstance(history, list):
         versions = [item.get("transaction_version") for item in history if isinstance(item, Mapping)]
@@ -348,6 +410,28 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
             errors.append("$.ledger.history: transaction versions must be strictly increasing")
         if any(not isinstance(version, int) or isinstance(version, bool) or version < 0 or version > ledger.get("transaction_version", -1) for version in versions):
             errors.append("$.ledger.history: transaction versions must be non-negative and not exceed the ledger version")
+    reconciliation_history = ledger.get("reconciliation_history", [])
+    reset_history = ledger.get("reset_history", [])
+    reconciliation_versions = []
+    for path, records in (("reconciliation_history", reconciliation_history), ("reset_history", reset_history)):
+        if not isinstance(records, list):
+            errors.append(f"$.ledger.{path}: must be an array")
+            continue
+        versions = [item.get("reconciliation_version") for item in records if isinstance(item, Mapping)]
+        if versions != sorted(versions) or len(versions) != len(set(versions)):
+            errors.append(f"$.ledger.{path}: reconciliation versions must be strictly increasing")
+        reconciliation_versions.extend(versions)
+    expected_reconciliation_version = ledger.get("reconciliation_version")
+    if isinstance(expected_reconciliation_version, int) and not isinstance(expected_reconciliation_version, bool):
+        if sorted(reconciliation_versions) != list(range(1, expected_reconciliation_version + 1)):
+            errors.append("$.ledger.reconciliation_version: history count and versions must exactly match reconciliation_version")
+    failure_history = ledger.get("failure_history", [])
+    if not isinstance(failure_history, list):
+        errors.append("$.ledger.failure_history: must be an array")
+    applied_ids = ledger.get("applied_event_ids", [])
+    recorded_ids = [item.get("event_id") for collection in (history if isinstance(history, list) else [], failure_history if isinstance(failure_history, list) else []) for item in collection if isinstance(item, Mapping)]
+    if isinstance(applied_ids, list) and (len(applied_ids) != len(set(applied_ids)) or set(applied_ids) != set(recorded_ids)):
+        errors.append("$.ledger.applied_event_ids: must uniquely match transaction and failure history event IDs")
     measurement, enforcement = ledger.get("measurement"), ledger.get("enforcement")
     if enforcement in {"local_enforced", "provider_enforced"} and (measurement != "observed" or not ledger.get("measurement_source")):
         errors.append("$.ledger.enforcement: enforced ledgers require observed measurement and a source")
@@ -374,8 +458,24 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
             errors.append(f"$.ledger.reservations.{key}: all amounts must be non-negative finite numbers")
         elif not math.isclose(reservation["initial_reserved"] + reservation["funded_reservation_overrun"], reservation["active_reserved"] + reservation["funded_consumed"] + reservation["released_unused"], abs_tol=1e-9):
             errors.append(f"$.ledger.reservations.{key}: per-reservation conservation failed")
-        if reservation.get("state") in TERMINAL_STATES and not reservation.get("terminal_evidence"):
+        retry_of = reservation.get("retry_of_reservation_id")
+        attempt = reservation.get("attempt")
+        if reservation.get("kind") == "retry":
+            prior = reservations.get(retry_of)
+            if not isinstance(prior, Mapping):
+                errors.append(f"$.ledger.reservations.{key}.retry_of_reservation_id: retry must identify an earlier reservation")
+            else:
+                if prior.get("state") not in TERMINAL_STATES:
+                    errors.append(f"$.ledger.reservations.{key}.retry_of_reservation_id: prior attempt must be terminal")
+                if attempt != prior.get("attempt", 0) + 1:
+                    errors.append(f"$.ledger.reservations.{key}.attempt: must increment the prior attempt")
+        elif retry_of is not None or attempt != 1:
+            errors.append(f"$.ledger.reservations.{key}.retry_of_reservation_id: non-retry reservations require null lineage and attempt 1")
+        terminal_evidence = reservation.get("terminal_evidence")
+        if reservation.get("state") in TERMINAL_STATES and not terminal_evidence:
             errors.append(f"$.ledger.reservations.{key}.terminal_evidence: terminal state requires evidence")
+        elif terminal_evidence and terminal_evidence not in evidence:
+            errors.append(f"$.ledger.reservations.{key}.terminal_evidence: missing registry evidence {terminal_evidence!r}")
     if _is_non_negative(ledger.get("unfunded_consumed")) and ledger.get("unfunded_consumed", 0) > 0 and ledger.get("status") not in {"degraded", "blocked"}:
         errors.append("$.ledger.status: unfunded consumption requires degraded or blocked status")
     return errors
@@ -394,29 +494,144 @@ def _verified_snapshot(container: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], reasons: list[str]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    recovered_registry = deepcopy(dict(registry))
-    recovered_registry.pop("last_known_good", None)
-    recovered_registry.setdefault("assignments", {})
-    for assignment in recovered_registry["assignments"].values():
-        if isinstance(assignment, dict) and assignment.get("state") not in TERMINAL_STATES:
-            assignment["state"] = "unknown"
-    recovered_registry["status"] = "degraded"
-    recovered_registry.setdefault("quarantine", []).append({"reason": "; ".join(reasons), "source": "cross-record", "snapshot_version": recovered_registry.get("snapshot_version") if isinstance(recovered_registry.get("snapshot_version"), int) else None})
-    recovered_ledger = deepcopy(dict(ledger))
-    recovered_ledger.pop("last_known_good", None)
-    recovered_ledger["status"] = "blocked"
-    recovered_ledger["balances_known"] = False
-    for field in BALANCE_FIELDS:
-        recovered_ledger[field] = None
-    recovered_ledger["recovery_required"] = True
-    recovered_ledger["recovery_error"] = "; ".join(reasons)
-    recovered_ledger["accuracy_marker"] = "unknown_recovery"
-    recovered_ledger.setdefault("quarantine", []).append({"reason": "; ".join(reasons), "source": "cross-record"})
+    """Return a closed-schema, cross-record-valid blocked state with safe entries retained."""
+    reason = "; ".join(str(item) for item in reasons if str(item).strip()) or "orchestration state could not be verified"
+    raw_evidence = registry.get("evidence", {}) if isinstance(registry.get("evidence"), Mapping) else {}
+    recovered_evidence: dict[str, Any] = {}
+    for key, item in raw_evidence.items():
+        if isinstance(key, str) and key.strip() and isinstance(item, Mapping) and item.get("evidence_id") == key:
+            allowed = {name: deepcopy(item[name]) for name in ("evidence_id", "kind", "outcome", "sha256", "version") if name in item}
+            if allowed.get("kind") in {"review", "source", "test", "task", "return", "reservation", "terminal", "decision"} and allowed.get("outcome") in {"accepted", "rejected", "verified", "failed", "unknown"}:
+                recovered_evidence[key] = allowed
+
+    raw_teammates = registry.get("teammates", {}) if isinstance(registry.get("teammates"), Mapping) else {}
+    recovered_teammates: dict[str, Any] = {}
+    for key, item in raw_teammates.items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(item, Mapping) or item.get("logical_teammate_id") != key:
+            continue
+        trust = item.get("trust", {}) if isinstance(item.get("trust"), Mapping) else {}
+        trust_refs = [ref for ref in trust.get("evidence_refs", []) if ref in recovered_evidence and recovered_evidence[ref].get("kind") == "review"]
+        successful = sum(recovered_evidence[ref].get("outcome") == "accepted" for ref in trust_refs)
+        failed = sum(recovered_evidence[ref].get("outcome") in {"rejected", "failed"} for ref in trust_refs)
+        capability = item.get("capability_class") if item.get("capability_class") in {"economy", "standard", "reasoning", "frontier"} else "standard"
+        continuity = item.get("continuity_mode") if item.get("continuity_mode") in {"resume", "rehydrate", "fresh"} else "rehydrate"
+        recovered_teammates[key] = {
+            "logical_teammate_id": key,
+            "role": item.get("role") if isinstance(item.get("role"), str) and item.get("role").strip() else "recovered",
+            "capability_class": capability,
+            "continuity_mode": continuity,
+            "native_handle": None,
+            "working_set_evidence_refs": [ref for ref in item.get("working_set_evidence_refs", []) if ref in recovered_evidence],
+            "trust": {"successful_reviews": successful, "failed_reviews": failed, "evidence_refs": trust_refs},
+            "active_assignment_ids": [],
+        }
+
+    raw_assignments = registry.get("assignments", {}) if isinstance(registry.get("assignments"), Mapping) else {}
+    raw_reservations = ledger.get("reservations", {}) if isinstance(ledger.get("reservations"), Mapping) else {}
+    recovered_assignments: dict[str, Any] = {}
+    recovered_reservations: dict[str, Any] = {}
+    reservation_fields = {
+        "reservation_id", "assignment_id", "retry_of_reservation_id", "logical_teammate_id", "kind", "attempt",
+        "initial_reserved", "active_reserved", "funded_consumed", "funded_reservation_overrun",
+        "unfunded_consumed", "released_unused", "state", "measurement", "reservation_transaction_id",
+        "evidence_refs", "terminal_evidence",
+    }
+    for assignment_id, assignment in raw_assignments.items():
+        if not isinstance(assignment_id, str) or not assignment_id.strip() or not isinstance(assignment, Mapping):
+            continue
+        teammate_id = assignment.get("logical_teammate_id")
+        reservation_id = assignment.get("reservation_id")
+        reservation = raw_reservations.get(reservation_id)
+        if teammate_id not in recovered_teammates or not isinstance(reservation_id, str) or not reservation_id.strip() or not isinstance(reservation, Mapping):
+            continue
+        if reservation.get("reservation_id") != reservation_id or reservation.get("assignment_id") != assignment_id or reservation.get("logical_teammate_id") != teammate_id:
+            continue
+        cleaned = {name: deepcopy(reservation.get(name)) for name in reservation_fields}
+        cleaned["state"] = "unknown"
+        cleaned["terminal_evidence"] = None
+        cleaned["evidence_refs"] = [ref for ref in reservation.get("evidence_refs", []) if ref in recovered_evidence]
+        if any(not _is_non_negative(cleaned.get(name)) for name in ("initial_reserved", "active_reserved", "funded_consumed", "funded_reservation_overrun", "unfunded_consumed", "released_unused")):
+            continue
+        recovered_reservations[reservation_id] = cleaned
+        recovered_assignments[assignment_id] = {
+            "assignment_id": assignment_id,
+            "logical_teammate_id": teammate_id,
+            "reservation_id": reservation_id,
+            "capability_class": recovered_teammates[teammate_id]["capability_class"],
+            "state": "unknown",
+            "evidence_refs": [ref for ref in assignment.get("evidence_refs", []) if ref in recovered_evidence],
+        }
+        recovered_teammates[teammate_id]["active_assignment_ids"].append(assignment_id)
+
+    snapshot_version = ledger.get("snapshot_version") if isinstance(ledger.get("snapshot_version"), int) and not isinstance(ledger.get("snapshot_version"), bool) and ledger.get("snapshot_version") >= 0 else 0
+    transaction_version = ledger.get("transaction_version") if isinstance(ledger.get("transaction_version"), int) and not isinstance(ledger.get("transaction_version"), bool) and ledger.get("transaction_version") >= 0 else 0
+    transaction_id = ledger.get("transaction_id") if isinstance(ledger.get("transaction_id"), str) and ledger.get("transaction_id").strip() else "recovery-quarantine"
+    quarantine_entries = [{"reason": reason, "source": "cross-record", "snapshot_version": snapshot_version}]
+    for teammate_id, teammate in raw_teammates.items():
+        if isinstance(teammate, Mapping) and isinstance(teammate.get("native_handle"), Mapping):
+            quarantine_entries.append({"reason": f"removed unverified or expired native handle for {teammate_id}", "source": "native-handle", "snapshot_version": snapshot_version})
+    recovered_registry = {
+        "schema_version": 1,
+        "snapshot_version": snapshot_version,
+        "transaction_version": transaction_version,
+        "transaction_id": transaction_id,
+        "run_id": registry.get("run_id") if isinstance(registry.get("run_id"), str) and registry.get("run_id").strip() else "recovered-run",
+        "coordinator_id": registry.get("coordinator_id") if isinstance(registry.get("coordinator_id"), str) and registry.get("coordinator_id").strip() else "recovered-coordinator",
+        "status": "degraded",
+        "evidence": recovered_evidence,
+        "teammates": recovered_teammates,
+        "assignments": recovered_assignments,
+        "quarantine": quarantine_entries,
+    }
+    unit = ledger.get("unit") if ledger.get("unit") in {"credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"} else "model_calls"
+    ceiling = ledger.get("ceiling") if _is_non_negative(ledger.get("ceiling")) else 0
+    reserves = ledger.get("reserves") if isinstance(ledger.get("reserves"), Mapping) else {}
+    recovered_ledger = {
+        "schema_version": 1,
+        "snapshot_version": snapshot_version,
+        "transaction_version": transaction_version,
+        "reconciliation_version": 0,
+        "transaction_id": transaction_id,
+        "status": "blocked",
+        "balances_known": False,
+        "unit": unit,
+        "ceiling": ceiling,
+        "measurement": "unavailable",
+        "enforcement": "advisory",
+        "measurement_source": None,
+        "reserves": {name: reserves.get(name) if _is_non_negative(reserves.get(name)) else 0 for name in ("coordinator", "integration", "mandatory_review")},
+        "available": None,
+        "reserved": None,
+        "funded_consumed": None,
+        "funded_reservation_overrun": None,
+        "unfunded_consumed": None,
+        "total_consumed": None,
+        "released": None,
+        "reservations": recovered_reservations,
+        "history": [],
+        "reconciliation_history": [],
+        "reset_history": [],
+        "failure_history": [],
+        "applied_event_ids": [],
+        "recovery_required": True,
+        "recovery_error": reason,
+        "accuracy_marker": "unknown_recovery",
+        "quarantine": [{"reason": reason, "source": "cross-record"}],
+    }
+    recovery_errors = validate_orchestration_state(recovered_registry, recovered_ledger)
+    if recovery_errors:
+        recovered_registry["evidence"] = {}
+        recovered_registry["teammates"] = {}
+        recovered_registry["assignments"] = {}
+        recovered_ledger["reservations"] = {}
+        recovery_errors = validate_orchestration_state(recovered_registry, recovered_ledger)
+        if recovery_errors:
+            reasons = reasons + [f"degraded recovery validation failed: {item}" for item in recovery_errors]
     return recovered_registry, recovered_ledger, reasons
 
 
 def recover_state(registry: Mapping[str, Any], ledger: Mapping[str, Any], evidence: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    """Recover from valid current state or verified snapshots, then replay evidence once."""
+    """Recover verified state and replay events while rebuilding both sides atomically."""
     if not isinstance(evidence, Sequence) or isinstance(evidence, (str, bytes)):
         raise TypeError("evidence must be a sequence of mappings")
     current_errors = validate_orchestration_state(registry, ledger)
@@ -436,20 +651,57 @@ def recover_state(registry: Mapping[str, Any], ledger: Mapping[str, Any], eviden
         for item in evidence:
             if not isinstance(item, Mapping):
                 raise ValueError("evidence item must be an object")
-            if item.get("type") in {"start", "retry_start", "complete", "retry_complete", "cancel", "failed", "fail", "timeout", "late_report", "reconcile", "reconciliation_failure", "reset"}:
-                recovered_ledger = apply_ledger_event(recovered_ledger, item)
+            event_type = item.get("type")
+            if event_type not in {"start", "retry_start", "complete", "retry_complete", "cancel", "failed", "fail", "timeout", "late_report", "reconcile", "reconciliation_failure", "reset"}:
+                continue
+            already_applied = item.get("event_id") in recovered_ledger.get("applied_event_ids", [])
+            recovered_ledger = apply_ledger_event(recovered_ledger, item)
+            if already_applied:
+                continue
+            if event_type in {"start", "retry_start"}:
+                assignment_id = _required_text(item.get("assignment_id"), "$.evidence.assignment_id")
+                reservation_id = _required_text(item.get("reservation_id"), "$.evidence.reservation_id")
+                teammate_id = _required_text(item.get("logical_teammate_id"), "$.evidence.logical_teammate_id")
+                teammate = recovered_registry.get("teammates", {}).get(teammate_id)
+                if not isinstance(teammate, dict):
+                    raise ValueError(f"$.evidence.logical_teammate_id: unknown teammate {teammate_id!r}")
+                refs = list(item.get("evidence_refs", []))
+                missing = [ref for ref in refs if ref not in recovered_registry.get("evidence", {})]
+                if missing:
+                    raise ValueError(f"$.evidence.evidence_refs: missing registry evidence {missing!r}")
+                if assignment_id in recovered_registry.get("assignments", {}):
+                    raise ValueError(f"$.evidence.assignment_id: conflicting assignment {assignment_id!r}")
+                recovered_registry.setdefault("assignments", {})[assignment_id] = {
+                    "assignment_id": assignment_id,
+                    "logical_teammate_id": teammate_id,
+                    "reservation_id": reservation_id,
+                    "capability_class": teammate["capability_class"],
+                    "state": "running",
+                    "evidence_refs": refs,
+                }
+                teammate.setdefault("active_assignment_ids", []).append(assignment_id)
+            reservation_id = item.get("reservation_id")
+            reservation = recovered_ledger.get("reservations", {}).get(reservation_id)
+            if isinstance(reservation, Mapping):
+                assignment = recovered_registry.get("assignments", {}).get(reservation.get("assignment_id"))
+                if not isinstance(assignment, dict):
+                    raise ValueError(f"$.evidence.assignment_id: reservation {reservation_id!r} has no matching registry assignment")
+                assignment["state"] = reservation.get("state", "unknown")
+                teammate = recovered_registry.get("teammates", {}).get(assignment.get("logical_teammate_id"))
+                if not isinstance(teammate, dict):
+                    raise ValueError("$.evidence.logical_teammate_id: assignment teammate is unavailable")
+                active_ids = teammate.setdefault("active_assignment_ids", [])
+                is_active = assignment["state"] in {"reserved", "running", "unknown"}
+                if is_active and assignment["assignment_id"] not in active_ids:
+                    active_ids.append(assignment["assignment_id"])
+                if not is_active and assignment["assignment_id"] in active_ids:
+                    active_ids.remove(assignment["assignment_id"])
     except (TypeError, ValueError, KeyError) as exc:
         return _unknown_recovery(recovered_registry, recovered_ledger, notices + [f"evidence replay failed: {exc}"])
 
     recovered_registry["snapshot_version"] = recovered_ledger.get("snapshot_version")
     recovered_registry["transaction_version"] = recovered_ledger.get("transaction_version")
     recovered_registry["transaction_id"] = recovered_ledger.get("transaction_id")
-    state_map = {"reserved": "reserved", "running": "running", "complete": "complete", "failed": "failed", "cancelled": "cancelled", "unknown": "unknown"}
-    for assignment_id, assignment in recovered_registry.get("assignments", {}).items():
-        if isinstance(assignment, dict):
-            reservation = recovered_ledger.get("reservations", {}).get(assignment.get("reservation_id"))
-            if isinstance(reservation, Mapping):
-                assignment["state"] = state_map.get(reservation.get("state"), "unknown")
     final_errors = validate_orchestration_state(recovered_registry, recovered_ledger)
     if final_errors:
         return _unknown_recovery(recovered_registry, recovered_ledger, notices + final_errors)

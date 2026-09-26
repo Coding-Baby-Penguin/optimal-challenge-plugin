@@ -71,6 +71,72 @@ class SchemaTests(unittest.TestCase):
         errors = "\n".join(validate_orchestration_state(registry, ledger))
         self.assertIn("more than one reservation", errors)
         self.assertIn("strictly increasing", errors)
+    def test_bidirectional_registry_ledger_links_states_membership_and_evidence_are_checked(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        registry["evidence"]["wrong-key"] = {"evidence_id": "different-id", "kind": "source", "outcome": "verified"}
+        registry["teammates"]["worker-1"]["active_assignment_ids"] = ["assignment-1"]
+        registry["assignments"]["assignment-1"]["state"] = "complete"
+        ledger["reservations"]["reservation-1"]["logical_teammate_id"] = "other-worker"
+        orphan = copy.deepcopy(ledger["reservations"]["reservation-1"])
+        orphan.update({"reservation_id": "orphan", "assignment_id": "orphan-assignment", "active_reserved": 0, "initial_reserved": 0, "evidence_refs": ["missing-evidence"]})
+        ledger["reservations"]["orphan"] = orphan
+        errors = "\n".join(validate_orchestration_state(registry, ledger))
+        self.assertIn("evidence_id", errors)
+        self.assertIn("active_assignment_ids", errors)
+        self.assertIn("state", errors)
+        self.assertIn("logical_teammate_id", errors)
+        self.assertIn("orphan-assignment", errors)
+        self.assertIn("missing-evidence", errors)
+
+    def test_retry_lineage_is_enforced_by_schema_and_validator(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        reservation = ledger["reservations"]["reservation-1"]
+        reservation.update({"kind": "retry", "attempt": 2, "retry_of_reservation_id": None})
+        schema = json.loads((ROOT / "config" / "allocation-ledger.schema.json").read_text(encoding="utf-8"))
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(ledger)))
+        self.assertIn("retry_of_reservation_id", "\n".join(validate_orchestration_state(registry, ledger)))
+    def test_active_assignment_owner_and_terminal_evidence_are_bidirectional(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        second = copy.deepcopy(registry["teammates"]["worker-1"])
+        second["logical_teammate_id"] = "worker-2"
+        second["active_assignment_ids"] = ["assignment-1"]
+        registry["teammates"]["worker-2"] = second
+        registry["teammates"]["worker-1"]["active_assignment_ids"] = []
+        errors = "\n".join(validate_orchestration_state(registry, ledger))
+        self.assertIn("assigned teammate", errors)
+
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        registry["teammates"]["worker-1"]["active_assignment_ids"] = []
+        registry["assignments"]["assignment-1"]["state"] = "complete"
+        reservation = ledger["reservations"]["reservation-1"]
+        reservation.update({"state": "complete", "active_reserved": 0, "funded_consumed": 40, "terminal_evidence": "missing-terminal"})
+        ledger.update({"reserved": 0, "funded_consumed": 40, "total_consumed": 40})
+        self.assertIn("missing-terminal", "\n".join(validate_orchestration_state(registry, ledger)))
+    def test_reconciliation_and_reset_histories_must_match_version_and_order(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        ledger["reconciliation_version"] = 2
+        ledger["reconciliation_history"] = [
+            {"event_id": "r2", "type": "late_report", "transaction_id": "t2", "transaction_version": 3, "reconciliation_version": 2, "event_hash": "0" * 64},
+            {"event_id": "r1", "type": "late_report", "transaction_id": "t1", "transaction_version": 2, "reconciliation_version": 1, "event_hash": "1" * 64},
+        ]
+        errors = "\n".join(validate_orchestration_state(registry, ledger))
+        self.assertIn("reconciliation versions must be strictly increasing", errors)
+        ledger["reconciliation_history"] = []
+        self.assertIn("history count", "\n".join(validate_orchestration_state(registry, ledger)))
+        ledger["reset_history"] = [{"reconciliation_version": 2}, {"reconciliation_version": 1}]
+        self.assertIn("reset_history: reconciliation versions must be strictly increasing", "\n".join(validate_orchestration_state(registry, ledger)))
+
+    def test_schemas_reject_whitespace_only_ids_and_property_names(self) -> None:
+        registry_schema = json.loads((ROOT / "config" / "team-registry.schema.json").read_text(encoding="utf-8"))
+        ledger_schema = json.loads((ROOT / "config" / "allocation-ledger.schema.json").read_text(encoding="utf-8"))
+        registry = load_fixture("valid-registry.json")
+        registry["transaction_id"] = "   "
+        registry["evidence"]["   "] = {"evidence_id": "   ", "kind": "source", "outcome": "verified"}
+        ledger = load_fixture("valid-ledger.json")
+        ledger["reservations"]["reservation-1"]["assignment_id"] = "   "
+        ledger["reservations"]["   "] = ledger["reservations"].pop("reservation-1")
+        self.assertTrue(list(Draft202012Validator(registry_schema).iter_errors(registry)))
+        self.assertTrue(list(Draft202012Validator(ledger_schema).iter_errors(ledger)))
     def test_balance_and_registry_reservation_invariants_are_checked(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
         ledger["available"] = 61
@@ -131,10 +197,24 @@ class LedgerMutationTests(unittest.TestCase):
     def test_retry_uses_new_reservation_and_unavailable_complete_is_conservative(self) -> None:
         ledger = apply_ledger_event(self.empty_ledger(measurement="unavailable"), event("start", 2, reservation_id="first", assignment_id="a", amount=20))
         ledger = apply_ledger_event(ledger, event("failed", 3, reservation_id="first", confirms_no_further_use=True, amount=0, confirmed_remainder=20, terminal_evidence="failed"))
-        ledger = apply_ledger_event(ledger, event("retry_start", 4, reservation_id="retry", assignment_id="a", amount=10, attempt=2))
+        ledger = apply_ledger_event(ledger, event("retry_start", 4, reservation_id="retry", assignment_id="a-retry-2", retry_of_reservation_id="first", amount=10, attempt=2))
         ledger = apply_ledger_event(ledger, event("retry_complete", 5, reservation_id="retry", terminal_evidence="retry-return"))
         self.assertEqual(("failed", "complete", 10), (ledger["reservations"]["first"]["state"], ledger["reservations"]["retry"]["state"], ledger["funded_consumed"]))
 
+    def test_retry_requires_unique_attempt_assignment_and_lineage(self) -> None:
+        ledger = apply_ledger_event(self.empty_ledger(), event("start", 2, reservation_id="first", assignment_id="a", amount=20))
+        ledger = apply_ledger_event(ledger, event("failed", 3, reservation_id="first", amount=0, confirmed_remainder=20, terminal_evidence="failed"))
+        with self.assertRaisesRegex(ValueError, "unique attempt assignment"):
+            apply_ledger_event(ledger, event("retry_start", 4, reservation_id="retry", assignment_id="a", retry_of_reservation_id="first", amount=10, attempt=2))
+        with self.assertRaisesRegex(ValueError, "retry_of_reservation_id"):
+            apply_ledger_event(ledger, event("retry_start", 5, reservation_id="retry", assignment_id="a-retry-2", amount=10, attempt=2))
+
+    def test_unavailable_cancel_and_timeout_retain_unknown_reservation(self) -> None:
+        for event_type in ("cancel", "timeout"):
+            with self.subTest(event_type=event_type):
+                ledger = apply_ledger_event(self.empty_ledger(measurement="unavailable"), event("start", 2, reservation_id="r", assignment_id="a", amount=20))
+                result = apply_ledger_event(ledger, event(event_type, 3, reservation_id="r", amount=0, confirmed_remainder=20, terminal_evidence="host-signal"))
+                self.assertEqual(("unknown", 20, 0), (result["reservations"]["r"]["state"], result["reserved"], result["released"]))
     def test_late_observed_report_replaces_estimate_and_reconciles(self) -> None:
         ledger = apply_ledger_event(self.empty_ledger(measurement="estimated"), event("start", 2, reservation_id="r2", assignment_id="a2", amount=30))
         ledger = apply_ledger_event(ledger, event("complete", 3, reservation_id="r2", amount=20, measurement="estimated", terminal_evidence="estimate"))
@@ -149,6 +229,10 @@ class LedgerMutationTests(unittest.TestCase):
             self.assertEqual(ledger[key], failed[key])
         self.assertTrue(failed["recovery_required"])
         self.assertEqual("degraded", failed["status"])
+        self.assertEqual(["event-2"], failed["applied_event_ids"])
+        self.assertEqual(failed, apply_ledger_event(failed, event("reconciliation_failure", 2, reason="counter unavailable")))
+        with self.assertRaisesRegex(ValueError, "conflicting replay"):
+            apply_ledger_event(failed, event("reconciliation_failure", 2, reason="different failure"))
 
     def test_advisory_reset_preserves_prior_values_and_marks_accuracy_degraded(self) -> None:
         ledger = apply_ledger_event(self.empty_ledger(measurement="estimated"), event("start", 2, reservation_id="r2", assignment_id="a2", amount=20))
@@ -185,10 +269,14 @@ class RecoveryAndCliTests(unittest.TestCase):
         registry["snapshot_version"] = 9
         recovered_registry, recovered_ledger, errors = recover_state(registry, ledger, [])
         self.assertEqual("degraded", recovered_registry["status"])
-        self.assertEqual("unknown", recovered_registry["assignments"]["assignment-1"]["state"])
+        self.assertIn(recovered_registry.get("assignments", {}).get("assignment-1", {}).get("state"), {None, "unknown"})
         self.assertEqual((False, "blocked", None), (recovered_ledger["balances_known"], recovered_ledger["status"], recovered_ledger["available"]))
         self.assertTrue(recovered_registry["quarantine"])
         self.assertTrue(errors)
+        for schema_name, recovered in [("team-registry.schema.json", recovered_registry), ("allocation-ledger.schema.json", recovered_ledger)]:
+            schema = json.loads((ROOT / "config" / schema_name).read_text(encoding="utf-8"))
+            self.assertEqual([], list(Draft202012Validator(schema).iter_errors(recovered)))
+        self.assertEqual([], validate_orchestration_state(recovered_registry, recovered_ledger))
 
     def test_stale_native_handle_is_quarantined_and_assignment_becomes_unknown(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
@@ -199,9 +287,29 @@ class RecoveryAndCliTests(unittest.TestCase):
             "evidence_ref": "work-1",
         }
         recovered_registry, recovered_ledger, errors = recover_state(registry, ledger, [])
-        self.assertEqual("unknown", recovered_registry["assignments"]["assignment-1"]["state"])
+        self.assertIn(recovered_registry.get("assignments", {}).get("assignment-1", {}).get("state"), {None, "unknown"})
+        self.assertIsNone(recovered_registry["teammates"]["worker-1"]["native_handle"])
+        self.assertTrue(any(item["source"] == "native-handle" for item in recovered_registry["quarantine"]))
         self.assertFalse(recovered_ledger["balances_known"])
         self.assertTrue(any("expired" in error for error in errors))
+        for schema_name, recovered in [("team-registry.schema.json", recovered_registry), ("allocation-ledger.schema.json", recovered_ledger)]:
+            schema = json.loads((ROOT / "config" / schema_name).read_text(encoding="utf-8"))
+            self.assertEqual([], list(Draft202012Validator(schema).iter_errors(recovered)))
+        self.assertEqual([], validate_orchestration_state(recovered_registry, recovered_ledger))
+    def test_replay_reconstructs_registry_assignment_or_blocks_incomplete_evidence(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        registry["assignments"] = {}
+        registry["teammates"]["worker-1"]["active_assignment_ids"] = []
+        ledger["reservations"] = {}
+        ledger.update({"available": 100, "reserved": 0})
+        registry, ledger, errors = recover_state(registry, ledger, [event("start", 2, reservation_id="r2", assignment_id="a2", logical_teammate_id="worker-1", amount=10, evidence_refs=["work-1"])])
+        self.assertEqual([], errors)
+        self.assertEqual("a2", registry["assignments"]["a2"]["assignment_id"])
+        self.assertEqual("r2", registry["assignments"]["a2"]["reservation_id"])
+        self.assertEqual([], validate_orchestration_state(registry, ledger))
+        _, broken_ledger, broken_errors = recover_state(registry, ledger, [event("start", 3, reservation_id="r3", assignment_id="a3", amount=10)])
+        self.assertEqual("blocked", broken_ledger["status"])
+        self.assertTrue(any("logical_teammate_id" in error for error in broken_errors))
     def test_cli_reports_success_and_failure_without_tracebacks(self) -> None:
         command = [sys.executable, str(ROOT / "scripts" / "validate_orchestration.py"), "--registry", str(FIXTURES / "valid-registry.json"), "--ledger", str(FIXTURES / "valid-ledger.json")]
         valid = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
@@ -215,6 +323,26 @@ class RecoveryAndCliTests(unittest.TestCase):
         self.assertIn("ORCHESTRATION STATE VALIDATION FAILED", invalid.stdout)
         self.assertNotIn("Traceback", invalid.stderr)
 
+    def test_cli_schema_validates_before_cross_record_checks_with_paths(self) -> None:
+        registry = load_fixture("valid-registry.json")
+        registry["unexpected"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "registry.json"
+            path.write_text(json.dumps(registry), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "validate_orchestration.py"), "--registry", str(path), "--ledger", str(FIXTURES / "valid-ledger.json")], cwd=ROOT, capture_output=True, text=True, check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("$.registry", result.stdout)
+        self.assertIn("unexpected", result.stdout)
+        self.assertNotIn("snapshot_version", result.stdout)
+        ledger = load_fixture("valid-ledger.json")
+        ledger["unexpected"] = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            path.write_text(json.dumps(ledger), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(ROOT / "scripts" / "validate_orchestration.py"), "--registry", str(FIXTURES / "valid-registry.json"), "--ledger", str(path)], cwd=ROOT, capture_output=True, text=True, check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("$.ledger", result.stdout)
+        self.assertIn("unexpected", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()

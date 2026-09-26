@@ -4,81 +4,527 @@
   "title": "Optimal Challenge allocation ledger",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "snapshot_version", "transaction_version", "reconciliation_version", "transaction_id", "status", "balances_known", "unit", "ceiling", "measurement", "enforcement", "measurement_source", "reserves", "available", "reserved", "funded_consumed", "funded_reservation_overrun", "unfunded_consumed", "total_consumed", "released", "reservations", "history", "reconciliation_history", "reset_history", "applied_event_ids"],
+  "required": [
+    "schema_version",
+    "snapshot_version",
+    "transaction_version",
+    "reconciliation_version",
+    "transaction_id",
+    "status",
+    "balances_known",
+    "unit",
+    "ceiling",
+    "measurement",
+    "enforcement",
+    "measurement_source",
+    "reserves",
+    "available",
+    "reserved",
+    "funded_consumed",
+    "funded_reservation_overrun",
+    "unfunded_consumed",
+    "total_consumed",
+    "released",
+    "reservations",
+    "history",
+    "reconciliation_history",
+    "reset_history",
+    "failure_history",
+    "applied_event_ids"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
-    "snapshot_version": {"type": "integer", "minimum": 0},
-    "transaction_version": {"type": "integer", "minimum": 0},
-    "reconciliation_version": {"type": "integer", "minimum": 0},
-    "transaction_id": {"type": "string", "minLength": 1},
-    "status": {"enum": ["active", "degraded", "blocked"]},
-    "balances_known": {"type": "boolean"},
-    "unit": {"enum": ["credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"]},
-    "ceiling": {"type": "number", "minimum": 0},
-    "measurement": {"enum": ["unavailable", "estimated", "observed"]},
-    "enforcement": {"enum": ["advisory", "local_enforced", "provider_enforced"]},
-    "measurement_source": {"type": ["string", "null"], "minLength": 1},
-    "reserves": {"$ref": "#/$defs/reserves"},
-    "available": {"$ref": "#/$defs/balance"},
-    "reserved": {"$ref": "#/$defs/balance"},
-    "funded_consumed": {"$ref": "#/$defs/balance"},
-    "funded_reservation_overrun": {"$ref": "#/$defs/balance"},
-    "unfunded_consumed": {"$ref": "#/$defs/balance"},
-    "total_consumed": {"$ref": "#/$defs/balance"},
-    "released": {"$ref": "#/$defs/balance"},
-    "reservations": {"type": "object", "additionalProperties": {"$ref": "#/$defs/reservation"}},
-    "history": {"type": "array", "items": {"$ref": "#/$defs/history"}},
-    "reconciliation_history": {"type": "array", "items": {"$ref": "#/$defs/history"}},
-    "reset_history": {"type": "array", "items": {"$ref": "#/$defs/reset"}},
-    "applied_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "recovery_required": {"type": "boolean"},
-    "recovery_error": {"type": "string", "minLength": 1},
-    "accuracy_marker": {"enum": ["advisory_reset", "unknown_recovery"]},
-    "quarantine": {"type": "array", "items": {"$ref": "#/$defs/quarantine"}}
-  },
-  "$defs": {
-    "balance": {"type": ["number", "null"], "minimum": 0},
-    "reserves": {
-      "type": "object", "additionalProperties": false,
-      "required": ["coordinator", "integration", "mandatory_review"],
-      "properties": {"coordinator": {"type": "number", "minimum": 0}, "integration": {"type": "number", "minimum": 0}, "mandatory_review": {"type": "number", "minimum": 0}}
+    "schema_version": {
+      "const": 1
     },
-    "reservation": {
-      "type": "object", "additionalProperties": false,
-      "required": ["reservation_id", "assignment_id", "kind", "attempt", "initial_reserved", "active_reserved", "funded_consumed", "funded_reservation_overrun", "unfunded_consumed", "released_unused", "state", "measurement", "reservation_transaction_id", "evidence_refs", "terminal_evidence"],
-      "properties": {
-        "reservation_id": {"type": "string", "minLength": 1},
-        "assignment_id": {"type": "string", "minLength": 1},
-        "logical_teammate_id": {"type": ["string", "null"], "minLength": 1},
-        "kind": {"enum": ["coordinator", "worker", "tool", "retry", "review", "integration"]},
-        "attempt": {"type": "integer", "minimum": 1},
-        "initial_reserved": {"type": "number", "minimum": 0},
-        "active_reserved": {"type": "number", "minimum": 0},
-        "funded_consumed": {"type": "number", "minimum": 0},
-        "funded_reservation_overrun": {"type": "number", "minimum": 0},
-        "unfunded_consumed": {"type": "number", "minimum": 0},
-        "released_unused": {"type": "number", "minimum": 0},
-        "state": {"enum": ["reserved", "running", "complete", "failed", "cancelled", "unknown"]},
-        "measurement": {"enum": ["unavailable", "estimated", "observed"]},
-        "reservation_transaction_id": {"type": "string", "minLength": 1},
-        "evidence_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-        "terminal_evidence": {"type": ["string", "null"], "minLength": 1}
+    "snapshot_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "transaction_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reconciliation_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "transaction_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "degraded",
+        "blocked"
+      ]
+    },
+    "balances_known": {
+      "type": "boolean"
+    },
+    "unit": {
+      "enum": [
+        "credits",
+        "tokens",
+        "seconds",
+        "currency",
+        "tool_calls",
+        "model_calls"
+      ]
+    },
+    "ceiling": {
+      "type": "number",
+      "minimum": 0
+    },
+    "measurement": {
+      "enum": [
+        "unavailable",
+        "estimated",
+        "observed"
+      ]
+    },
+    "enforcement": {
+      "enum": [
+        "advisory",
+        "local_enforced",
+        "provider_enforced"
+      ]
+    },
+    "measurement_source": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "reserves": {
+      "$ref": "#/$defs/reserves"
+    },
+    "available": {
+      "$ref": "#/$defs/balance"
+    },
+    "reserved": {
+      "$ref": "#/$defs/balance"
+    },
+    "funded_consumed": {
+      "$ref": "#/$defs/balance"
+    },
+    "funded_reservation_overrun": {
+      "$ref": "#/$defs/balance"
+    },
+    "unfunded_consumed": {
+      "$ref": "#/$defs/balance"
+    },
+    "total_consumed": {
+      "$ref": "#/$defs/balance"
+    },
+    "released": {
+      "$ref": "#/$defs/balance"
+    },
+    "reservations": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/reservation"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/identifier"
       }
     },
     "history": {
-      "type": "object", "additionalProperties": false,
-      "required": ["event_id", "type", "transaction_id", "transaction_version", "event_hash"],
-      "properties": {"event_id": {"type": "string", "minLength": 1}, "type": {"type": "string", "minLength": 1}, "transaction_id": {"type": "string", "minLength": 1}, "transaction_version": {"type": "integer", "minimum": 0}, "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "reservation_id": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}}
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/history"
+      }
     },
-    "reset": {
-      "type": "object", "additionalProperties": false,
-      "required": ["event_id", "transaction_id", "reason", "authority", "evidence_ref", "prior"],
-      "properties": {"event_id": {"type": "string", "minLength": 1}, "transaction_id": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}, "authority": {"enum": ["user", "coordinator"]}, "evidence_ref": {"type": "string", "minLength": 1}, "prior": {"$ref": "#/$defs/reservation"}}
+    "reconciliation_history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/history"
+      }
+    },
+    "reset_history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reset"
+      }
+    },
+    "applied_event_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/identifier"
+      }
+    },
+    "recovery_required": {
+      "type": "boolean"
+    },
+    "recovery_error": {
+      "type": "string",
+      "minLength": 1
+    },
+    "accuracy_marker": {
+      "enum": [
+        "advisory_reset",
+        "unknown_recovery"
+      ]
     },
     "quarantine": {
-      "type": "object", "additionalProperties": false,
-      "required": ["reason", "source"],
-      "properties": {"reason": {"type": "string", "minLength": 1}, "source": {"enum": ["registry", "ledger", "cross-record"]}}
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/quarantine"
+      }
+    },
+    "failure_history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/failure"
+      }
+    }
+  },
+  "$defs": {
+    "balance": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "reserves": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinator",
+        "integration",
+        "mandatory_review"
+      ],
+      "properties": {
+        "coordinator": {
+          "type": "number",
+          "minimum": 0
+        },
+        "integration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mandatory_review": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reservation_id",
+        "assignment_id",
+        "retry_of_reservation_id",
+        "kind",
+        "attempt",
+        "initial_reserved",
+        "active_reserved",
+        "funded_consumed",
+        "funded_reservation_overrun",
+        "unfunded_consumed",
+        "released_unused",
+        "state",
+        "measurement",
+        "reservation_transaction_id",
+        "evidence_refs",
+        "terminal_evidence"
+      ],
+      "properties": {
+        "reservation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "assignment_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "logical_teammate_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "coordinator",
+            "worker",
+            "tool",
+            "retry",
+            "review",
+            "integration"
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initial_reserved": {
+          "type": "number",
+          "minimum": 0
+        },
+        "active_reserved": {
+          "type": "number",
+          "minimum": 0
+        },
+        "funded_consumed": {
+          "type": "number",
+          "minimum": 0
+        },
+        "funded_reservation_overrun": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unfunded_consumed": {
+          "type": "number",
+          "minimum": 0
+        },
+        "released_unused": {
+          "type": "number",
+          "minimum": 0
+        },
+        "state": {
+          "enum": [
+            "reserved",
+            "running",
+            "complete",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "measurement": {
+          "enum": [
+            "unavailable",
+            "estimated",
+            "observed"
+          ]
+        },
+        "reservation_transaction_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "terminal_evidence": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retry_of_reservation_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "then": {
+            "properties": {
+              "retry_of_reservation_id": {
+                "$ref": "#/$defs/identifier"
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 2
+              }
+            }
+          },
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "retry"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "retry_of_reservation_id": {
+                "type": "null"
+              },
+              "attempt": {
+                "const": 1
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Retry attempts use a unique assignment_id, increment attempt, and name the terminal prior reservation in retry_of_reservation_id; initial reservations use attempt 1 and null lineage."
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "type",
+        "transaction_id",
+        "transaction_version",
+        "event_hash"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "transaction_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reservation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "reconciliation_version": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "reset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "transaction_id",
+        "transaction_version",
+        "reconciliation_version",
+        "reason",
+        "authority",
+        "evidence_ref",
+        "prior"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "authority": {
+          "enum": [
+            "user",
+            "coordinator"
+          ]
+        },
+        "evidence_ref": {
+          "$ref": "#/$defs/identifier"
+        },
+        "prior": {
+          "$ref": "#/$defs/reservation"
+        },
+        "transaction_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reconciliation_version": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "quarantine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "source"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "enum": [
+            "registry",
+            "ledger",
+            "cross-record"
+          ]
+        }
+      }
+    },
+    "identifier": {
+      "minLength": 1,
+      "type": "string",
+      "pattern": ".*\\S.*"
+    },
+    "failure": {
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "type",
+        "transaction_id",
+        "transaction_version",
+        "reconciliation_version",
+        "event_hash",
+        "reason"
+      ],
+      "properties": {
+        "transaction_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "event_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "reconciliation_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "reconciliation_failure"
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "type": "object"
     }
   }
 }

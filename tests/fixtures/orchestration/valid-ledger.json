@@ -11,7 +11,11 @@
   "measurement": "observed",
   "enforcement": "advisory",
   "measurement_source": "fixture-counter",
-  "reserves": {"coordinator": 10, "integration": 10, "mandatory_review": 10},
+  "reserves": {
+    "coordinator": 10,
+    "integration": 10,
+    "mandatory_review": 10
+  },
   "available": 60,
   "reserved": 40,
   "funded_consumed": 0,
@@ -35,12 +39,16 @@
       "state": "running",
       "measurement": "observed",
       "reservation_transaction_id": "tx-1",
-      "evidence_refs": ["work-1"],
-      "terminal_evidence": null
+      "evidence_refs": [
+        "work-1"
+      ],
+      "terminal_evidence": null,
+      "retry_of_reservation_id": null
     }
   },
   "history": [],
   "reconciliation_history": [],
   "reset_history": [],
-  "applied_event_ids": []
+  "applied_event_ids": [],
+  "failure_history": []
 }
