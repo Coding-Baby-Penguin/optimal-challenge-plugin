@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "arm_id": "A",
+  "subject_commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
+  "subject_tag": "v1.1.0",
+  "status": "unverified",
+  "archive_sha256": null,
+  "cachebuster": null,
+  "manifest_sha256": null,
+  "installed_plugin_read_back": null,
+  "raw_result_ids": [],
+  "aggregate": null,
+  "comparative_claims_allowed": false,
+  "reason": "No isolated fresh-task v1.1 host run has been recorded for this evaluation manifest.",
+  "next_action": "Install the pinned v1.1 archive in a clean cache, verify read-back, and run the matrix in fresh disposable tasks before recording any comparison."
+}

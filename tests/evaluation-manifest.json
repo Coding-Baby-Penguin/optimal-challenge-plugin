@@ -1,0 +1,138 @@
+{
+  "manifest_version": 1,
+  "prompt_hashes": {
+    "router": "b2703591ea22074079ae11a730050447bd9f98a7803554b0974fa3b16ba6f580",
+    "question_bundle": "7f92a32320192f499cf4535f901b8dccd259ab6b9ec4fc5d29058c0affd0f5b4"
+  },
+  "fixture_hashes": {
+    "behavioral_acceptance": "54e68de241d69bd7934ebc780915da16798cad67bc4aa52c6f37d0a06533f207",
+    "team_routing": "428c62c820403bb4923314ecfbaec9388f4555067feb63b2fc067e761404323e"
+  },
+  "host": "codex-desktop",
+  "surface": "codex-local",
+  "model": "host-configured-read-back-required",
+  "reasoning": "host-configured-read-back-required",
+  "tool_set": ["filesystem", "shell", "collaboration"],
+  "profile": "balanced",
+  "config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
+  "evaluator_version": "1.0.0",
+  "rubric_version": "1.0.0",
+  "randomization": {
+    "method": "seeded-counterbalance",
+    "seed": 12027,
+    "execution_order": ["A", "D", "B", "C"],
+    "record_actual_order": true
+  },
+  "minimum_run_count": 5,
+  "run_policy": {
+    "deterministic_structural_runs": 1,
+    "stochastic_behavioral_runs_per_case_per_arm": 5
+  },
+  "aggregation": {
+    "quality": "mean",
+    "cost": "median-observed-only",
+    "latency": "median-observed-only",
+    "pass_rate": "raw-proportion",
+    "confidence_interval": "paired-bootstrap-95"
+  },
+  "margins": {
+    "quality_noninferiority": 0.1,
+    "simple_task_cost_latency": 0.05,
+    "high_value_quality_gain": 0.2,
+    "high_value_critical_path_reduction": 0.1,
+    "unnecessary_spawn_rate_max": 0.1
+  },
+  "isolation": {
+    "fresh_task_per_arm": true,
+    "fresh_disposable_registry": true,
+    "fresh_disposable_ledger": true,
+    "clear_plugin_cache_between_subjects": true,
+    "identical_allowed_configuration": true,
+    "installed_identity_read_back_required": true,
+    "cross_arm_fingerprint_reuse_forbidden": true
+  },
+  "arms": [
+    {
+      "arm_id": "A",
+      "definition": "v1.1 routing baseline",
+      "policy_overrides": {"release": "v1.1", "delegation": "v1.1-routing", "continuity": "v1.1-routing", "premise_gate": "v1.1-routing"},
+      "commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
+      "tag": "v1.1.0",
+      "archive_sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1",
+      "expected_manifest_version": "1.1.0",
+      "cachebuster": "baseline-c3c379ab",
+      "install_source": "isolated-local-archive",
+      "identity_status": "unverified",
+      "installed_plugin_read_back": {
+        "name": "optimal-challenge",
+        "version": "1.1.0",
+        "cachebuster": "baseline-c3c379ab",
+        "archive_sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1"
+      }
+    },
+    {
+      "arm_id": "B",
+      "definition": "always delegate decomposable work",
+      "policy_overrides": {"release": "v1.2-candidate", "delegation": "always-for-decomposable", "continuity": "disabled", "premise_gate": "disabled"},
+      "evaluation_only": true,
+      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "tag": "v1.2.0-candidate",
+      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "expected_manifest_version": "1.2.0",
+      "cachebuster": "candidate-93ff8725-arm-b",
+      "install_source": "isolated-git-archive",
+      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "installed_plugin_read_back": {
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "cachebuster": "candidate-93ff8725-arm-b",
+        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+      }
+    },
+    {
+      "arm_id": "C",
+      "definition": "economic delegation gate without logical teammate continuity",
+      "policy_overrides": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "disabled", "premise_gate": "disabled"},
+      "evaluation_only": true,
+      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "tag": "v1.2.0-candidate",
+      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "expected_manifest_version": "1.2.0",
+      "cachebuster": "candidate-93ff8725-arm-c",
+      "install_source": "isolated-git-archive",
+      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "installed_plugin_read_back": {
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "cachebuster": "candidate-93ff8725-arm-c",
+        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+      }
+    },
+    {
+      "arm_id": "D",
+      "definition": "full economic gate, logical continuity, and premise gate candidate",
+      "policy_overrides": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "enabled", "premise_gate": "enabled"},
+      "evaluation_only": false,
+      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "tag": "v1.2.0-candidate",
+      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "expected_manifest_version": "1.2.0",
+      "cachebuster": "candidate-93ff8725-arm-d",
+      "install_source": "isolated-git-archive",
+      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "installed_plugin_read_back": {
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "cachebuster": "candidate-93ff8725-arm-d",
+        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+      }
+    }
+  ],
+  "claim_policy": {
+    "structural_validation_is_not_host_behavior_proof": true,
+    "unverified_surfaces_are_excluded": true,
+    "inconclusive_is_not_improvement": true,
+    "proxy_only_cannot_support_cost_claim": true,
+    "refresh_candidate_identity_after_release_build": true
+  }
+}
