@@ -17,8 +17,8 @@
   ],
   "properties": {
     "schema_version": {"const": 1},
-    "mode": {"enum": ["inline-only", "auto", "team-requested"]},
-    "profile": {"enum": ["economy", "balanced", "quality", "custom"]},
+    "mode": {"type": "string", "enum": ["inline-only", "auto", "team-requested"]},
+    "profile": {"type": "string", "enum": ["economy", "balanced", "quality", "custom"]},
     "objective_weights": {
       "type": "object",
       "additionalProperties": false,
@@ -48,7 +48,7 @@
         "delegation_margin": {"type": "integer", "minimum": 1, "maximum": 12},
         "allow_mode_margin_override": {"type": "boolean", "default": false},
         "retry_limit": {"type": "integer", "minimum": 0, "maximum": 12},
-        "capability_class": {"enum": ["economy", "standard", "reasoning", "frontier"]}
+        "capability_class": {"type": "string", "enum": ["economy", "standard", "reasoning", "frontier"]}
       }
     },
     "premise_gate": {
@@ -81,7 +81,7 @@
         "compensating_oracle_requires_user_acceptance"
       ],
       "properties": {
-        "default_depth": {"enum": ["self-check", "targeted", "independent"]},
+        "default_depth": {"type": "string", "enum": ["self-check", "targeted", "independent"]},
         "review_margin": {"type": "integer", "minimum": 1, "maximum": 27},
         "mandatory_independent_review": {"type": "boolean"},
         "compensating_oracle_requires_user_acceptance": {"type": "boolean"}
@@ -92,7 +92,7 @@
       "additionalProperties": false,
       "required": ["runtime_state", "state_directory", "persist_transcripts", "persist_sensitive_data"],
       "properties": {
-        "runtime_state": {"enum": ["none", "local", "provider"]},
+        "runtime_state": {"type": "string", "enum": ["none", "local", "provider"]},
         "state_directory": {"type": "string", "minLength": 1},
         "persist_transcripts": {"type": "boolean"},
         "persist_sensitive_data": {"type": "boolean"}
@@ -101,18 +101,112 @@
     "budget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["unit", "limit", "measurement", "enforcement", "measurement_source", "soft_threshold"],
+      "required": [
+        "unit",
+        "limit",
+        "measurement",
+        "enforcement",
+        "measurement_source",
+        "soft_threshold",
+        "adapter_capabilities"
+      ],
       "properties": {
         "unit": {
           "type": ["string", "null"],
           "enum": [null, "credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"]
         },
         "limit": {"type": ["number", "null"], "exclusiveMinimum": 0},
-        "measurement": {"enum": ["unavailable", "estimated", "observed"]},
-        "enforcement": {"enum": ["advisory", "local_enforced", "provider_enforced"]},
+        "measurement": {"type": "string", "enum": ["unavailable", "estimated", "observed"]},
+        "enforcement": {"type": "string", "enum": ["advisory", "local_enforced", "provider_enforced"]},
         "measurement_source": {"type": ["string", "null"]},
-        "soft_threshold": {"type": ["number", "null"], "exclusiveMinimum": 0}
-      }
+        "soft_threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "adapter_capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed_measurement", "local_stop", "provider_stop"],
+          "properties": {
+            "observed_measurement": {"$ref": "#/$defs/capabilityEvidence"},
+            "local_stop": {"$ref": "#/$defs/capabilityEvidence"},
+            "provider_stop": {"$ref": "#/$defs/capabilityEvidence"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enforcement": {"const": "local_enforced"}}},
+          "then": {
+            "properties": {
+              "measurement": {"const": "observed"},
+              "measurement_source": {"type": "string", "minLength": 1},
+              "adapter_capabilities": {
+                "properties": {
+                  "observed_measurement": {"$ref": "#/$defs/verifiedCapabilityEvidence"},
+                  "local_stop": {"$ref": "#/$defs/verifiedCapabilityEvidence"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"enforcement": {"const": "provider_enforced"}}},
+          "then": {
+            "properties": {
+              "measurement": {"const": "observed"},
+              "measurement_source": {"type": "string", "minLength": 1},
+              "adapter_capabilities": {
+                "properties": {
+                  "observed_measurement": {"$ref": "#/$defs/verifiedCapabilityEvidence"},
+                  "provider_stop": {"$ref": "#/$defs/verifiedCapabilityEvidence"}
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"profile": {"const": "economy"}}},
+      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 3}}}}}
+    },
+    {
+      "if": {"properties": {"profile": {"const": "balanced"}}},
+      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 1}}}}}
+    },
+    {
+      "if": {"properties": {"profile": {"const": "quality"}}},
+      "then": {"properties": {"team_limits": {"properties": {"delegation_margin": {"const": 1}}}}}
+    }
+  ],
+  "$defs": {
+    "capabilityEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verified", "evidence_id"],
+      "properties": {
+        "verified": {"type": "boolean"},
+        "evidence_id": {"type": ["string", "null"], "minLength": 1}
+      },
+      "oneOf": [
+        {
+          "properties": {"verified": {"const": false}, "evidence_id": {"type": "null"}}
+        },
+        {
+          "properties": {
+            "verified": {"const": true},
+            "evidence_id": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "verifiedCapabilityEvidence": {
+      "type": "object",
+      "properties": {
+        "verified": {"const": true},
+        "evidence_id": {"type": "string", "minLength": 1}
+      },
+      "required": ["verified", "evidence_id"]
     }
   }
 }

@@ -95,6 +95,52 @@ class OrchestrationConfigTests(unittest.TestCase):
             errors,
         )
 
+    def test_enforced_budget_requires_matching_adapter_capability_evidence(self):
+        config = load_effective_config(ROOT)
+        config["budget"].update(
+            {
+                "unit": "tokens",
+                "limit": 1000,
+                "measurement": "observed",
+                "enforcement": "provider_enforced",
+                "measurement_source": "provider usage counter",
+                "adapter_capabilities": {
+                    "observed_measurement": {"verified": True, "evidence_id": "acceptance:usage-17"},
+                    "local_stop": {"verified": False, "evidence_id": None},
+                    "provider_stop": {"verified": False, "evidence_id": None},
+                },
+            }
+        )
+
+        missing_stop_errors = validate_config(config)
+        self.assertTrue(
+            any("$.budget.adapter_capabilities.provider_stop" in error for error in missing_stop_errors),
+            missing_stop_errors,
+        )
+
+        config["budget"]["adapter_capabilities"]["provider_stop"] = {
+            "verified": True,
+            "evidence_id": "acceptance:provider-stop-8",
+        }
+        self.assertEqual(validate_config(config), [])
+
+        config["budget"]["enforcement"] = "local_enforced"
+        mismatched_stop_errors = validate_config(config)
+        self.assertTrue(
+            any("$.budget.adapter_capabilities.local_stop" in error for error in mismatched_stop_errors),
+            mismatched_stop_errors,
+        )
+
+        config["budget"]["adapter_capabilities"]["local_stop"] = {
+            "verified": True,
+            "evidence_id": None,
+        }
+        missing_evidence_errors = validate_config(config)
+        self.assertTrue(
+            any("$.budget.adapter_capabilities.local_stop.evidence_id" in error for error in missing_evidence_errors),
+            missing_evidence_errors,
+        )
+
     def test_custom_weights_sum_to_one(self):
         config = load_effective_config(ROOT)
         config["profile"] = "custom"
@@ -109,6 +155,93 @@ class OrchestrationConfigTests(unittest.TestCase):
 
         self.assertFalse(config["team_limits"]["allow_mode_margin_override"])
         self.assertEqual(config["team_limits"]["delegation_margin"], 1)
+
+    def test_profile_layers_apply_atomic_weights_and_delegation_margins(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            (root / ".optimal-challenge").mkdir()
+            committed = root / "config" / "orchestration.json"
+            local = root / ".optimal-challenge" / "orchestration.local.json"
+            committed.write_text(json.dumps({"profile": "economy"}), encoding="utf-8")
+
+            economy = load_effective_config(root)
+            self.assertEqual(economy["objective_weights"]["cost"], 0.35)
+            self.assertEqual(economy["team_limits"]["delegation_margin"], 3)
+
+            local.write_text(json.dumps({"profile": "balanced"}), encoding="utf-8")
+            balanced = load_effective_config(root)
+            self.assertEqual(balanced["objective_weights"]["quality"], 0.45)
+            self.assertEqual(balanced["team_limits"]["delegation_margin"], 1)
+
+            quality = load_effective_config(root, task_override={"profile": "quality"})
+            self.assertEqual(quality["objective_weights"]["rework"], 0.25)
+            self.assertEqual(quality["team_limits"]["delegation_margin"], 1)
+
+            local.unlink()
+            custom_default = load_effective_config(root, task_override={"profile": "custom"})
+            self.assertEqual(custom_default["team_limits"]["delegation_margin"], 1)
+            custom_seven = load_effective_config(
+                root,
+                task_override={"profile": "custom", "team_limits": {"delegation_margin": 7}},
+            )
+            self.assertEqual(custom_seven["team_limits"]["delegation_margin"], 7)
+            custom_partial_weights = load_effective_config(
+                root,
+                task_override={
+                    "profile": "custom",
+                    "objective_weights": {"quality": 0.50, "cost": 0.15},
+                },
+            )
+            self.assertEqual(
+                custom_partial_weights["objective_weights"],
+                {
+                    "quality": 0.50,
+                    "cost": 0.15,
+                    "latency": 0.10,
+                    "attention": 0.10,
+                    "rework": 0.15,
+                },
+            )
+
+    def test_malformed_enum_values_are_path_qualified_in_each_override_layer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            (root / ".optimal-challenge").mkdir()
+            (root / "config" / "orchestration.json").write_text("{}", encoding="utf-8")
+            local = root / ".optimal-challenge" / "orchestration.local.json"
+            local.write_text(json.dumps({"mode": []}), encoding="utf-8")
+
+            with self.assertRaises(ValueError) as local_error:
+                load_effective_config(root)
+            self.assertIn(".optimal-challenge/orchestration.local.json", str(local_error.exception))
+            self.assertIn("$.mode", str(local_error.exception))
+
+            local.unlink()
+            with self.assertRaises(ValueError) as task_error:
+                load_effective_config(root, task_override={"profile": {}})
+            self.assertIn("task_override", str(task_error.exception))
+            self.assertIn("$.profile", str(task_error.exception))
+
+    def test_invalid_lower_layer_cannot_be_hidden_by_higher_layer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            (root / ".optimal-challenge").mkdir()
+            (root / "config" / "orchestration.json").write_text(
+                json.dumps({"profile": "economy", "team_limits": {"delegation_margin": 2}}),
+                encoding="utf-8",
+            )
+            (root / ".optimal-challenge" / "orchestration.local.json").write_text(
+                json.dumps({"profile": "quality"}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError) as committed_error:
+                load_effective_config(root)
+            self.assertIn("config/orchestration.json", str(committed_error.exception))
+            self.assertIn("$.team_limits.delegation_margin", str(committed_error.exception))
 
     def test_exact_specialists_uses_minimum_host_limit(self):
         config = load_effective_config(

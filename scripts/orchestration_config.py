@@ -13,6 +13,12 @@ PROFILE_WEIGHTS: dict[str, dict[str, float]] = {
     "balanced": {"quality": 0.45, "cost": 0.20, "latency": 0.10, "attention": 0.10, "rework": 0.15},
     "quality": {"quality": 0.50, "cost": 0.10, "latency": 0.05, "attention": 0.10, "rework": 0.25},
 }
+PROFILE_DELEGATION_MARGINS: dict[str, int] = {
+    "economy": 3,
+    "balanced": 1,
+    "quality": 1,
+    "custom": 1,
+}
 
 BUILT_IN_DEFAULTS: dict[str, Any] = {
     "schema_version": 1,
@@ -54,6 +60,11 @@ BUILT_IN_DEFAULTS: dict[str, Any] = {
         "enforcement": "advisory",
         "measurement_source": None,
         "soft_threshold": None,
+        "adapter_capabilities": {
+            "observed_measurement": {"verified": False, "evidence_id": None},
+            "local_stop": {"verified": False, "evidence_id": None},
+            "provider_stop": {"verified": False, "evidence_id": None},
+        },
     },
 }
 
@@ -65,6 +76,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "$.verification": set(BUILT_IN_DEFAULTS["verification"]),
     "$.persistence_privacy": set(BUILT_IN_DEFAULTS["persistence_privacy"]),
     "$.budget": set(BUILT_IN_DEFAULTS["budget"]),
+    "$.budget.adapter_capabilities": {"observed_measurement", "local_stop", "provider_stop"},
+    "$.budget.adapter_capabilities.observed_measurement": {"verified", "evidence_id"},
+    "$.budget.adapter_capabilities.local_stop": {"verified", "evidence_id"},
+    "$.budget.adapter_capabilities.provider_stop": {"verified", "evidence_id"},
 }
 
 
@@ -104,11 +119,29 @@ def _read_object(path: Path) -> Mapping[str, Any]:
 def _merge_layer(config: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
     prepared = dict(override)
     selected_profile = prepared.get("profile")
-    if selected_profile in PROFILE_WEIGHTS and "objective_weights" not in prepared:
-        prepared["objective_weights"] = PROFILE_WEIGHTS[selected_profile]
-    elif selected_profile == "custom" and "objective_weights" not in prepared:
-        prepared["objective_weights"] = PROFILE_WEIGHTS["balanced"]
-    return merge_known(config, prepared)
+    layer_base = config
+    if isinstance(selected_profile, str) and selected_profile in PROFILE_DELEGATION_MARGINS:
+        weights_profile = selected_profile if selected_profile in PROFILE_WEIGHTS else "balanced"
+        layer_base = merge_known(
+            config,
+            {
+                "objective_weights": PROFILE_WEIGHTS[weights_profile],
+                "team_limits": {"delegation_margin": PROFILE_DELEGATION_MARGINS[selected_profile]},
+            },
+        )
+    return merge_known(layer_base, prepared)
+
+
+def _validated_candidate(
+    config: Mapping[str, Any],
+    source: str,
+    detected_host_max: int | None,
+) -> dict[str, Any]:
+    candidate = deepcopy(dict(config))
+    errors = validate_config(candidate, detected_host_max=detected_host_max)
+    if errors:
+        raise ValueError(f"Invalid orchestration configuration from {source}:\n- " + "\n- ".join(errors))
+    return candidate
 
 
 def load_effective_config(
@@ -118,21 +151,22 @@ def load_effective_config(
 ) -> dict[str, Any]:
     """Load built-ins, committed config, ignored local config, then task overrides."""
     root = Path(root)
-    config: dict[str, Any] = deepcopy(BUILT_IN_DEFAULTS)
-    for path in [
-        root / "config" / "orchestration.json",
-        root / ".optimal-challenge" / "orchestration.local.json",
+    config = _validated_candidate(BUILT_IN_DEFAULTS, "built-in defaults", detected_host_max)
+    for path, source in [
+        (root / "config" / "orchestration.json", "config/orchestration.json"),
+        (
+            root / ".optimal-challenge" / "orchestration.local.json",
+            ".optimal-challenge/orchestration.local.json",
+        ),
     ]:
         if path.is_file():
-            config = _merge_layer(config, _read_object(path))
+            candidate = _merge_layer(config, _read_object(path))
+            config = _validated_candidate(candidate, source, detected_host_max)
     if task_override is not None:
         if not isinstance(task_override, Mapping):
             raise TypeError("task_override must be a mapping or None")
-        config = _merge_layer(config, task_override)
-
-    errors = validate_config(config, detected_host_max=detected_host_max)
-    if errors:
-        raise ValueError("Invalid orchestration configuration:\n- " + "\n- ".join(errors))
+        candidate = _merge_layer(config, task_override)
+        config = _validated_candidate(candidate, "task_override", detected_host_max)
     return config
 
 
@@ -163,17 +197,27 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
                 errors.append(f"{path}.{key}: required key is missing")
         return value
 
+    def enum_at(path: str, value: Any, choices: tuple[str, ...], allow_none: bool = False) -> bool:
+        if allow_none and value is None:
+            return True
+        allowed = ", ".join(choices)
+        if not isinstance(value, str):
+            errors.append(f"{path}: must be a string with one of these values: {allowed}")
+            return False
+        if value not in choices:
+            errors.append(f"{path}: must be one of: {allowed}")
+            return False
+        return True
+
     root = object_at("$", config)
     if root is None:
         return errors
 
     if root.get("schema_version") != 1:
         errors.append("$.schema_version: must be 1")
-    if root.get("mode") not in {"inline-only", "auto", "team-requested"}:
-        errors.append("$.mode: must be inline-only, auto, or team-requested")
+    enum_at("$.mode", root.get("mode"), ("inline-only", "auto", "team-requested"))
     profile = root.get("profile")
-    if profile not in {"economy", "balanced", "quality", "custom"}:
-        errors.append("$.profile: must be economy, balanced, quality, or custom")
+    enum_at("$.profile", profile, ("economy", "balanced", "quality", "custom"))
 
     weights = object_at("$.objective_weights", root.get("objective_weights"))
     if weights is not None:
@@ -186,7 +230,7 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
                 numeric_weights.append(float(value))
         if len(numeric_weights) == 5 and abs(sum(numeric_weights) - 1.0) > 1e-9:
             errors.append("$.objective_weights: weights must sum to 1")
-        if profile in PROFILE_WEIGHTS and dict(weights) != PROFILE_WEIGHTS[profile]:
+        if isinstance(profile, str) and profile in PROFILE_WEIGHTS and dict(weights) != PROFILE_WEIGHTS[profile]:
             errors.append(f"$.objective_weights: {profile} profile must use its documented weights")
 
     team = object_at("$.team_limits", root.get("team_limits"))
@@ -212,8 +256,18 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
                 )
         if not isinstance(team.get("allow_mode_margin_override"), bool):
             errors.append("$.team_limits.allow_mode_margin_override: must be a boolean")
-        if team.get("capability_class") not in {"economy", "standard", "reasoning", "frontier"}:
-            errors.append("$.team_limits.capability_class: unsupported capability class")
+        enum_at(
+            "$.team_limits.capability_class",
+            team.get("capability_class"),
+            ("economy", "standard", "reasoning", "frontier"),
+        )
+        if isinstance(profile, str) and profile in PROFILE_WEIGHTS:
+            expected_margin = PROFILE_DELEGATION_MARGINS[profile]
+            if team.get("delegation_margin") != expected_margin:
+                errors.append(
+                    "$.team_limits.delegation_margin: "
+                    f"{profile} profile requires {expected_margin}"
+                )
 
     premise = object_at("$.premise_gate", root.get("premise_gate"))
     if premise is not None:
@@ -229,8 +283,11 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
 
     verification = object_at("$.verification", root.get("verification"))
     if verification is not None:
-        if verification.get("default_depth") not in {"self-check", "targeted", "independent"}:
-            errors.append("$.verification.default_depth: unsupported verification depth")
+        enum_at(
+            "$.verification.default_depth",
+            verification.get("default_depth"),
+            ("self-check", "targeted", "independent"),
+        )
         margin = verification.get("review_margin")
         if not _is_int(margin) or not 1 <= margin <= 27:
             errors.append("$.verification.review_margin: must be an integer from 1 to 27")
@@ -240,8 +297,11 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
 
     persistence = object_at("$.persistence_privacy", root.get("persistence_privacy"))
     if persistence is not None:
-        if persistence.get("runtime_state") not in {"none", "local", "provider"}:
-            errors.append("$.persistence_privacy.runtime_state: must be none, local, or provider")
+        enum_at(
+            "$.persistence_privacy.runtime_state",
+            persistence.get("runtime_state"),
+            ("none", "local", "provider"),
+        )
         directory = persistence.get("state_directory")
         if not isinstance(directory, str) or not directory.strip():
             errors.append("$.persistence_privacy.state_directory: must be a non-empty string")
@@ -257,24 +317,58 @@ def validate_config(config: Mapping[str, Any], detected_host_max: int | None = N
         measurement = budget.get("measurement")
         enforcement = budget.get("enforcement")
         source = budget.get("measurement_source")
-        units = {"credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"}
-        if unit is not None and unit not in units:
-            errors.append("$.budget.unit: unsupported unit")
+        units = ("credits", "tokens", "seconds", "currency", "tool_calls", "model_calls")
+        enum_at("$.budget.unit", unit, units, allow_none=True)
         if limit is not None and (not _is_number(limit) or limit <= 0):
             errors.append("$.budget.limit: must be null or a positive number")
         if (unit is None) != (limit is None):
             errors.append("$.budget.unit: unit and limit must either both be set or both be null")
-        if measurement not in {"unavailable", "estimated", "observed"}:
-            errors.append("$.budget.measurement: must be unavailable, estimated, or observed")
-        if enforcement not in {"advisory", "local_enforced", "provider_enforced"}:
-            errors.append("$.budget.enforcement: unsupported enforcement mode")
+        enum_at("$.budget.measurement", measurement, ("unavailable", "estimated", "observed"))
+        enforcement_valid = enum_at(
+            "$.budget.enforcement",
+            enforcement,
+            ("advisory", "local_enforced", "provider_enforced"),
+        )
         if source is not None and (not isinstance(source, str) or not source.strip()):
             errors.append("$.budget.measurement_source: must be null or a non-empty string")
-        if enforcement in {"local_enforced", "provider_enforced"}:
+        adapter = object_at("$.budget.adapter_capabilities", budget.get("adapter_capabilities"))
+        verified_capabilities: set[str] = set()
+        if adapter is not None:
+            for capability in ["observed_measurement", "local_stop", "provider_stop"]:
+                capability_path = f"$.budget.adapter_capabilities.{capability}"
+                record = object_at(capability_path, adapter.get(capability))
+                if record is None:
+                    continue
+                verified = record.get("verified")
+                evidence_id = record.get("evidence_id")
+                if not isinstance(verified, bool):
+                    errors.append(f"{capability_path}.verified: must be a boolean")
+                if evidence_id is not None and (not isinstance(evidence_id, str) or not evidence_id.strip()):
+                    errors.append(f"{capability_path}.evidence_id: must be null or a non-empty string")
+                if verified is True:
+                    if isinstance(evidence_id, str) and evidence_id.strip():
+                        verified_capabilities.add(capability)
+                    else:
+                        errors.append(f"{capability_path}.evidence_id: verified capability requires evidence")
+                elif verified is False and evidence_id is not None:
+                    errors.append(f"{capability_path}.evidence_id: unverified capability must use null")
+
+        if enforcement_valid and enforcement in {"local_enforced", "provider_enforced"}:
             if measurement != "observed":
                 errors.append("$.budget.enforcement: enforced limits require observed measurement")
             if not isinstance(source, str) or not source.strip():
                 errors.append("$.budget.measurement_source: enforced limits require a verified source")
+            if "observed_measurement" not in verified_capabilities:
+                errors.append(
+                    "$.budget.adapter_capabilities.observed_measurement: "
+                    "enforced limits require verified observed-measurement evidence"
+                )
+            stop_capability = "local_stop" if enforcement == "local_enforced" else "provider_stop"
+            if stop_capability not in verified_capabilities:
+                errors.append(
+                    f"$.budget.adapter_capabilities.{stop_capability}: "
+                    f"{enforcement} requires verified matching stop-primitive evidence"
+                )
         if soft is not None and (not _is_number(soft) or soft <= 0):
             errors.append("$.budget.soft_threshold: must be null or a positive number")
         if soft is not None and limit is None:

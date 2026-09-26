@@ -18,7 +18,9 @@ instructions and pass current-request settings as `task_override`.
 `orchestration.schema.json` validates the complete effective configuration.
 The local file uses the same key tree but may omit unchanged keys because the
 loader merges it into a complete configuration before validation. Unknown
-keys fail. The existing
+keys fail. Built-ins are validated first; the committed, local, and task
+layers are each merged and validated before the next layer is read, so a
+higher-precedence value cannot hide an invalid lower layer. The existing
 `.optimal-challenge/` ignore rule covers `orchestration.local.json` and all
 reconstructable runtime state.
 
@@ -37,15 +39,18 @@ Never store passwords, tokens, private keys, or live credentials here. Commit on
 | `objective_weights.attention` | `0.10` | Number from 0 to 1 for every named profile. |
 | `objective_weights.rework` | `0.15` | Number from 0 to 1. Economy is `0.10`, Quality is `0.25`. |
 
-The five objective weights must sum to 1. Named profiles use the fixed values
-above. Custom begins with Balanced weights unless the same layer supplies its
-own normalized values.
+The five objective weights must sum to 1. Applying a named profile atomically
+loads its fixed weights and delegation margin: Economy uses `3`, Balanced uses
+`1`, and Quality uses `1`. Custom begins with Balanced weights and margin `1`
+unless the same layer supplies normalized weights or a margin from 1 to 12.
+This reset prevents values selected by a lower-precedence profile from leaking
+into the active profile.
 
 | Key | Default | Allowed values and purpose |
 |---|---:|---|
 | `team_limits.max_active_specialists` | `3` | Integer 0 to 3; the normal active-specialist cap, excluding the coordinator. |
 | `team_limits.exact_specialists` | `null` | `null` or integer 0 to 32. An explicit count is additionally bounded by `min(32, detected_host_max)`. |
-| `team_limits.delegation_margin` | `1` | Integer 1 to 12; the Custom profile's required benefit-minus-cost margin. |
+| `team_limits.delegation_margin` | `1` | Economy requires `3`; Balanced and Quality require `1`; Custom accepts integer 1 to 12. |
 | `team_limits.allow_mode_margin_override` | `false` | Boolean. Custom does not let `team-requested` reduce its margin unless explicitly enabled. |
 | `team_limits.retry_limit` | `1` | Integer 0 to 12; retries still require new information or capability. |
 | `team_limits.capability_class` | `standard` | `economy`, `standard`, `reasoning`, or `frontier`; provider-neutral only. |
@@ -74,12 +79,20 @@ own normalized values.
 | `budget.enforcement` | `advisory` | `advisory`, `local_enforced`, or `provider_enforced`. |
 | `budget.measurement_source` | `null` | `null` or a non-empty description of the authoritative counter. |
 | `budget.soft_threshold` | `null` | `null` or a positive value no greater than `limit`; optional work is reduced at this point. |
+| `budget.adapter_capabilities.observed_measurement.verified` | `false` | Boolean adapter assertion that the exact surface exposes an observed counter. |
+| `budget.adapter_capabilities.observed_measurement.evidence_id` | `null` | Non-empty acceptance/detection evidence ID when verified; otherwise `null`. |
+| `budget.adapter_capabilities.local_stop.verified` | `false` | Boolean adapter assertion that a matching local stop primitive is available. |
+| `budget.adapter_capabilities.local_stop.evidence_id` | `null` | Non-empty evidence ID when verified; otherwise `null`. |
+| `budget.adapter_capabilities.provider_stop.verified` | `false` | Boolean adapter assertion that a matching provider stop primitive is available. |
+| `budget.adapter_capabilities.provider_stop.evidence_id` | `null` | Non-empty evidence ID when verified; otherwise `null`. |
 
 Any measurement may support an advisory ceiling. `local_enforced` and
-`provider_enforced` are valid only with `observed` measurement and a verified
-matching source/stop primitive supplied by the adapter. Therefore the defaults
-are advisory and do not promise automatic prevention, exact remaining spend,
-or cancellation of running work.
+`provider_enforced` require `observed` measurement, a non-empty
+`measurement_source`, verified observed-measurement evidence, and respectively
+verified `local_stop` or `provider_stop` evidence. Every verified capability
+requires its own non-empty `evidence_id`; a source label alone is insufficient.
+Therefore the defaults are advisory and do not promise automatic prevention,
+exact remaining spend, or cancellation of running work.
 
 Example one-request override:
 
