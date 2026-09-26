@@ -1,20 +1,53 @@
+# Use empty or safe default values until the coordinator supplies verified data.
+# Never include secrets, complete transcripts, or unverified worker beliefs as facts.
 goal_id: ""
+assignment_id: ""
+logical_teammate_id: ""
 task:
   outcome: ""
   done_when: ""
 constraints: []
 relevant_decisions: []
 evidence_pointers: []
+premise:
+  decision_ids: []
+  evidence_refs: []
+  settled: false
+profile: balanced
+capability_class: standard
+allocation:
+  unit: ""
+  reservation_id: ""
+  worker: 0
+  tool: 0
+  retry: 0
+  review: 0
+retry_allowance: 0
+authority:
+  may_ask_user: false
+  may_expand_scope: false
+  may_spawn_agents: false
+  may_change_profile: false
+  may_acquire_permissions: false
 capability_lease:
   allowed: []
   conditional: []
   forbidden: []
   may_spawn_agents: false
 escalation:
+  # status is empty unless escalation is required; allowed escalation statuses
+  # are NEEDS_CAPABILITY and NEEDS_DECISION.
+  status: ""
   return_status: NEEDS_CAPABILITY
+  reason: ""
+  impact: ""
+  evidence_refs: []
+  decision_id: ""
 return_contract:
   - status
   - changed_artifacts
   - verification
   - decision_delta
   - concerns
+  - needs
+  - usage

@@ -1,0 +1,17 @@
+# Reconstructable logical identity only. Never include secrets, complete transcripts,
+# or unverified worker beliefs as project facts. Empty native-handle fields mean unavailable.
+logical_teammate_id: ""
+role: ""
+capability_class: standard
+continuity_mode: fresh
+native_handle:
+  provider: ""
+  handle: ""
+  expires_at: ""
+  evidence_ref: ""
+working_set_evidence_refs: []
+trust:
+  successful_reviews: 0
+  failed_reviews: 0
+  evidence_refs: []
+active_assignment_ids: []

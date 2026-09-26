@@ -1,0 +1,20 @@
+# Allowed status values: NEEDS_CAPABILITY, NEEDS_DECISION, complete, partial,
+# blocked, degraded, failed. Never include secrets, complete transcripts, or
+# unverified worker beliefs as project facts. Point to large artifacts instead.
+assignment_id: ""
+logical_teammate_id: ""
+status: ""
+changed_artifacts: []
+verification: []
+evidence_refs: []
+decisions: []
+assumptions: []
+risks: []
+needs:
+  capabilities: []
+  decisions: []
+usage:
+  unit: ""
+  measurement: unavailable
+  amount: null
+  source: ""
