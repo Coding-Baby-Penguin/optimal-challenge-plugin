@@ -70,7 +70,7 @@ class SchemaTests(unittest.TestCase):
         ]
         errors = "\n".join(validate_orchestration_state(registry, ledger))
         self.assertIn("more than one reservation", errors)
-        self.assertIn("strictly increasing", errors)
+        self.assertIn("nondecreasing", errors)
     def test_bidirectional_registry_ledger_links_states_membership_and_evidence_are_checked(self) -> None:
         registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
         registry["evidence"]["wrong-key"] = {"evidence_id": "different-id", "kind": "source", "outcome": "verified"}
@@ -120,11 +120,11 @@ class SchemaTests(unittest.TestCase):
             {"event_id": "r1", "type": "late_report", "transaction_id": "t1", "transaction_version": 2, "reconciliation_version": 1, "event_hash": "1" * 64},
         ]
         errors = "\n".join(validate_orchestration_state(registry, ledger))
-        self.assertIn("reconciliation versions must be strictly increasing", errors)
+        self.assertIn("reconciliation versions must be nondecreasing", errors)
         ledger["reconciliation_history"] = []
         self.assertIn("history count", "\n".join(validate_orchestration_state(registry, ledger)))
         ledger["reset_history"] = [{"reconciliation_version": 2}, {"reconciliation_version": 1}]
-        self.assertIn("reset_history: reconciliation versions must be strictly increasing", "\n".join(validate_orchestration_state(registry, ledger)))
+        self.assertIn("reset_history: reconciliation versions must be nondecreasing", "\n".join(validate_orchestration_state(registry, ledger)))
 
     def test_schemas_reject_whitespace_only_ids_and_property_names(self) -> None:
         registry_schema = json.loads((ROOT / "config" / "team-registry.schema.json").read_text(encoding="utf-8"))
@@ -248,6 +248,67 @@ class LedgerMutationTests(unittest.TestCase):
             apply_ledger_event(ledger, event("start", 2, reservation_id="r2", assignment_id="a2", amount=10))
 
 
+    def test_retry_rejects_branching_and_multiple_active_lineage_members(self) -> None:
+        ledger = apply_ledger_event(self.empty_ledger(), event("start", 20, reservation_id="first", assignment_id="a1", amount=20))
+        ledger = apply_ledger_event(ledger, event("failed", 21, reservation_id="first", amount=0, confirmed_remainder=20, terminal_evidence="failed"))
+        ledger = apply_ledger_event(ledger, event("retry_start", 22, reservation_id="second", assignment_id="a2", retry_of_reservation_id="first", amount=10, attempt=2))
+        before = copy.deepcopy(ledger)
+        with self.assertRaisesRegex(ValueError, "successor"):
+            apply_ledger_event(ledger, event("retry_start", 23, reservation_id="branch", assignment_id="a3", retry_of_reservation_id="first", amount=5, attempt=2))
+        self.assertEqual(before, ledger)
+        registry = load_fixture("valid-registry.json")
+        registry["assignments"] = {}
+        registry["teammates"]["worker-1"]["active_assignment_ids"] = []
+        corrupted = copy.deepcopy(ledger)
+        corrupted["reservations"]["first"]["state"] = "unknown"
+        self.assertIn("retry lineage", "\n".join(validate_orchestration_state(registry, corrupted)))
+
+    def test_event_validation_is_strict_and_failures_do_not_mutate(self) -> None:
+        invalid_events = [
+            event("bogus", 30),
+            event("start", 31, reservation_id="r", assignment_id="a", amount=1, attempt=True),
+            event("start", 32, reservation_id="r", assignment_id="a", amount=1, attempt=0),
+            event("start", 33, reservation_id="   ", assignment_id="a", amount=1),
+            event("start", 34, reservation_id="r", assignment_id="a", amount=1, kind="bogus"),
+            event("start", 35, reservation_id="r", assignment_id="a", amount=1, evidence_refs="not-a-list"),
+            event("start", 36, reservation_id="r", assignment_id="a", amount=1, evidence_refs=["ok", " "]),
+            {**event("start", 37, reservation_id="r", assignment_id="a", amount=1), "unexpected": True},
+        ]
+        for invalid in invalid_events:
+            with self.subTest(invalid=invalid):
+                ledger = self.empty_ledger()
+                before = copy.deepcopy(ledger)
+                with self.assertRaises((TypeError, ValueError)):
+                    apply_ledger_event(ledger, invalid)
+                self.assertEqual(before, ledger)
+
+    def test_confirmed_remainder_must_exactly_match_unused_reservation(self) -> None:
+        ledger = apply_ledger_event(self.empty_ledger(), event("start", 40, reservation_id="r", assignment_id="a", amount=20))
+        for usage, remainder in ((5, 14), (5, 16), (25, 1)):
+            with self.subTest(usage=usage, remainder=remainder):
+                with self.assertRaisesRegex(ValueError, "confirmed_remainder"):
+                    apply_ledger_event(ledger, event("failed", 41, reservation_id="r", amount=usage, confirmed_remainder=remainder, terminal_evidence="failed"))
+        settled = apply_ledger_event(ledger, event("failed", 42, reservation_id="r", amount=5, confirmed_remainder=15, terminal_evidence="failed"))
+        self.assertEqual(15, settled["released"])
+
+    def test_every_history_version_and_global_event_identity_are_validated(self) -> None:
+        registry, ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")
+        ledger["transaction_version"] = registry["transaction_version"] = 3
+        ledger["snapshot_version"] = registry["snapshot_version"] = 3
+        ledger["transaction_id"] = registry["transaction_id"] = "tx-3"
+        ledger["failure_history"] = [
+            {"event_id": "f2", "type": "reconciliation_failure", "transaction_id": "tx-3", "transaction_version": 4, "reconciliation_version": 0, "event_hash": "2" * 64, "reason": "x"},
+            {"event_id": "f1", "type": "reconciliation_failure", "transaction_id": "tx-2", "transaction_version": 2, "reconciliation_version": 0, "event_hash": "1" * 64, "reason": "y"},
+        ]
+        ledger["history"] = [{"event_id": "duplicate", "type": "start", "transaction_id": "tx-1", "transaction_version": 1, "event_hash": "0" * 64}]
+        ledger["failure_history"][0]["event_id"] = "duplicate"
+        ledger["applied_event_ids"] = ["duplicate", "f1"]
+        errors = "\n".join(validate_orchestration_state(registry, ledger))
+        self.assertIn("failure_history: transaction versions must be nondecreasing", errors)
+        self.assertIn("must not exceed", errors)
+        self.assertIn("conflicting event hash", errors)
+        ledger["history"][0]["reconciliation_version"] = 1
+        self.assertIn("history: reconciliation versions must be non-negative", "\n".join(validate_orchestration_state(registry, ledger)))
 class RecoveryAndCliTests(unittest.TestCase):
     def test_recovery_uses_verified_last_known_good_and_idempotent_replay(self) -> None:
         good_registry, good_ledger = load_fixture("valid-registry.json"), load_fixture("valid-ledger.json")

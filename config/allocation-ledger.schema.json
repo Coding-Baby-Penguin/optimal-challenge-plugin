@@ -261,7 +261,8 @@
         },
         "attempt": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 13
         },
         "initial_reserved": {
           "type": "number",
@@ -422,6 +423,7 @@
         "transaction_id",
         "transaction_version",
         "reconciliation_version",
+        "event_hash",
         "reason",
         "authority",
         "evidence_ref",
@@ -457,6 +459,10 @@
         "reconciliation_version": {
           "type": "integer",
           "minimum": 0
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     },

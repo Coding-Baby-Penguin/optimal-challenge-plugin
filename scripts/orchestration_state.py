@@ -15,6 +15,25 @@ BALANCE_FIELDS = (
     "available", "reserved", "funded_consumed", "funded_reservation_overrun",
     "unfunded_consumed", "total_consumed", "released",
 )
+EVENT_TYPES = {"start", "retry_start", "complete", "retry_complete", "cancel", "failed", "fail", "timeout", "late_report", "reconcile", "reconciliation_failure", "reset"}
+RESERVATION_KINDS = {"coordinator", "worker", "tool", "review", "integration"}
+MEASUREMENTS = {"observed", "estimated", "unavailable"}
+ACTIVE_STATES = {"reserved", "running", "unknown"}
+MAX_ATTEMPT = 13
+EVENT_FIELDS = {
+    "start": {"event_id", "type", "transaction_id", "reservation_id", "assignment_id", "logical_teammate_id", "kind", "amount", "attempt", "evidence_refs", "measurement"},
+    "retry_start": {"event_id", "type", "transaction_id", "reservation_id", "assignment_id", "logical_teammate_id", "retry_of_reservation_id", "amount", "attempt", "evidence_refs", "measurement"},
+    "complete": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence"},
+    "retry_complete": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence"},
+    "cancel": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence", "confirmed_remainder"},
+    "failed": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence", "confirmed_remainder", "confirms_no_further_use"},
+    "fail": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence", "confirmed_remainder", "confirms_no_further_use"},
+    "timeout": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence", "confirmed_remainder"},
+    "late_report": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence"},
+    "reconcile": {"event_id", "type", "transaction_id", "reservation_id", "amount", "measurement", "terminal_evidence"},
+    "reconciliation_failure": {"event_id", "type", "transaction_id", "reason"},
+    "reset": {"event_id", "type", "transaction_id", "reservation_id", "reason", "authority", "evidence_ref"},
+}
 
 
 def _number(value: Any, path: str) -> float | int:
@@ -27,6 +46,56 @@ def _required_text(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path}: must be a non-empty string")
     return value
+
+
+def _validate_identifier_list(value: Any, path: str) -> None:
+    if not isinstance(value, list):
+        raise TypeError(f"{path}: must be an array")
+    checked = [_required_text(item, f"{path}[{index}]") for index, item in enumerate(value)]
+    if len(checked) != len(set(checked)):
+        raise ValueError(f"{path}: identifiers must be unique")
+
+
+def _validate_attempt(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_ATTEMPT:
+        raise ValueError(f"{path}: must be an integer from 1 through {MAX_ATTEMPT}")
+    return value
+
+
+def _validate_event(event: Mapping[str, Any]) -> None:
+    event_type = _required_text(event.get("type"), "$.event.type")
+    if event_type not in EVENT_TYPES:
+        raise ValueError(f"$.event.type: unsupported ledger event {event_type!r}")
+    unknown = set(event) - EVENT_FIELDS[event_type]
+    if unknown:
+        raise ValueError(f"$.event: unknown fields {sorted(unknown)!r}")
+    _required_text(event.get("event_id"), "$.event.event_id")
+    _required_text(event.get("transaction_id"), "$.event.transaction_id")
+    if event_type in {"start", "retry_start", "complete", "retry_complete", "cancel", "failed", "fail", "timeout", "late_report", "reconcile", "reset"}:
+        _required_text(event.get("reservation_id"), "$.event.reservation_id")
+    if event_type in {"start", "retry_start"}:
+        _required_text(event.get("assignment_id"), "$.event.assignment_id")
+        _number(event.get("amount"), "$.event.amount")
+        _validate_attempt(event.get("attempt", 1), "$.event.attempt")
+        if event.get("logical_teammate_id") is not None:
+            _required_text(event["logical_teammate_id"], "$.event.logical_teammate_id")
+        if event_type == "start" and event.get("kind", "worker") not in RESERVATION_KINDS:
+            raise ValueError("$.event.kind: invalid reservation kind")
+        if event_type == "retry_start":
+            _required_text(event.get("retry_of_reservation_id"), "$.event.retry_of_reservation_id")
+        _validate_identifier_list(event.get("evidence_refs", []), "$.event.evidence_refs")
+    for field in ("terminal_evidence", "reason", "evidence_ref"):
+        if field in event:
+            _required_text(event[field], f"$.event.{field}")
+    if "measurement" in event and event["measurement"] not in MEASUREMENTS:
+        raise ValueError("$.event.measurement: invalid measurement")
+    for field in ("amount", "confirmed_remainder"):
+        if field in event:
+            _number(event[field], f"$.event.{field}")
+    if "confirms_no_further_use" in event and not isinstance(event["confirms_no_further_use"], bool):
+        raise TypeError("$.event.confirms_no_further_use: must be a boolean")
+    if event_type == "reset" and event.get("authority") not in {"user", "coordinator"}:
+        raise ValueError("$.event.authority: must be user or coordinator")
 
 
 def _canonical_hash(value: Mapping[str, Any]) -> str:
@@ -61,13 +130,14 @@ def _recompute(ledger: dict[str, Any]) -> None:
         ledger["status"] = "degraded" if ledger.get("status") != "blocked" else "blocked"
 
 
-def _advance(ledger: dict[str, Any], event: Mapping[str, Any], *, reconciliation: bool = False) -> None:
+def _advance(ledger: dict[str, Any], event: Mapping[str, Any], *, reconciliation: bool = False, record_history: bool = True) -> None:
     ledger["transaction_version"] += 1
     ledger["snapshot_version"] += 1
     if reconciliation:
         ledger["reconciliation_version"] += 1
     ledger["transaction_id"] = event["transaction_id"]
-    ledger.setdefault("history", []).append(_history_record(event, ledger["transaction_version"]))
+    if record_history:
+        ledger.setdefault("history", []).append(_history_record(event, ledger["transaction_version"]))
     ledger.setdefault("applied_event_ids", []).append(event["event_id"])
 
 
@@ -87,19 +157,102 @@ def _settle(reservation: dict[str, Any], usage: float | int, state: str, measure
     })
 
 
+def _validated_result(ledger: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed when a mutation would return a structurally inconsistent ledger."""
+    reservations = ledger.get("reservations")
+    if not isinstance(reservations, Mapping):
+        raise ValueError("$.ledger.reservations: must be an object")
+    transaction_version = ledger.get("transaction_version")
+    reconciliation_version = ledger.get("reconciliation_version")
+    if isinstance(transaction_version, bool) or not isinstance(transaction_version, int) or transaction_version < 0:
+        raise ValueError("$.ledger.transaction_version: must be a non-negative integer")
+    if isinstance(reconciliation_version, bool) or not isinstance(reconciliation_version, int) or reconciliation_version < 0:
+        raise ValueError("$.ledger.reconciliation_version: must be a non-negative integer")
+    seen_events: dict[str, Any] = {}
+    reconciliation_versions: list[int] = []
+    for name in ("history", "failure_history", "reconciliation_history", "reset_history"):
+        records = ledger.get(name)
+        if not isinstance(records, list):
+            raise ValueError(f"$.ledger.{name}: must be an array")
+        prior_transaction = -1
+        prior_reconciliation = -1
+        for index, record in enumerate(records):
+            if not isinstance(record, Mapping):
+                raise ValueError(f"$.ledger.{name}[{index}]: must be an object")
+            version = record.get("transaction_version")
+            if isinstance(version, bool) or not isinstance(version, int) or not prior_transaction <= version <= transaction_version:
+                raise ValueError(f"$.ledger.{name}: transaction versions must be nondecreasing and must not exceed current")
+            prior_transaction = version
+            if name != "history" or "reconciliation_version" in record:
+                recon = record.get("reconciliation_version")
+                if isinstance(recon, bool) or not isinstance(recon, int) or not prior_reconciliation <= recon <= reconciliation_version:
+                    raise ValueError(f"$.ledger.{name}: reconciliation versions must be nondecreasing and must not exceed current")
+                prior_reconciliation = recon
+                if name in {"reconciliation_history", "reset_history"}:
+                    reconciliation_versions.append(recon)
+            event_id = _required_text(record.get("event_id"), f"$.ledger.{name}[{index}].event_id")
+            event_hash = record.get("event_hash")
+            if not isinstance(event_hash, str) or len(event_hash) != 64:
+                raise ValueError(f"$.ledger.{name}[{index}].event_hash: invalid canonical hash")
+            if event_id in seen_events:
+                detail = "conflicting event hash" if seen_events[event_id] != event_hash else "duplicate event ID"
+                raise ValueError(f"$.ledger.{name}[{index}].event_id: {detail}")
+            seen_events[event_id] = event_hash
+    if sorted(reconciliation_versions) != list(range(1, reconciliation_version + 1)):
+        raise ValueError("$.ledger.reconciliation_version: specialized histories must exactly cover reconciliation versions")
+    applied = ledger.get("applied_event_ids")
+    if not isinstance(applied, list) or len(applied) != len(set(applied)) or set(applied) != set(seen_events):
+        raise ValueError("$.ledger.applied_event_ids: must uniquely match all history event IDs")
+    successors: set[tuple[str, int]] = set()
+    roots: dict[str, str] = {}
+    for key, reservation in reservations.items():
+        if not isinstance(reservation, Mapping):
+            raise ValueError(f"$.ledger.reservations.{key}: must be an object")
+        attempt = _validate_attempt(reservation.get("attempt"), f"$.ledger.reservations.{key}.attempt")
+        parent = reservation.get("retry_of_reservation_id")
+        if reservation.get("kind") == "retry":
+            successor = (_required_text(parent, f"$.ledger.reservations.{key}.retry_of_reservation_id"), attempt)
+            if successor in successors:
+                raise ValueError(f"$.ledger.reservations.{key}: retry predecessor/attempt already has a successor")
+            successors.add(successor)
+    for key in reservations:
+        current, seen = key, set()
+        while current in reservations and current not in seen:
+            seen.add(current)
+            parent = reservations[current].get("retry_of_reservation_id")
+            if not isinstance(parent, str):
+                break
+            current = parent
+        roots[key] = current
+    active: dict[str, int] = {}
+    for key, reservation in reservations.items():
+        if reservation.get("state") in ACTIVE_STATES:
+            root = roots[key]
+            active[root] = active.get(root, 0) + 1
+    if any(count > 1 for count in active.values()):
+        raise ValueError("$.ledger.reservations: at most one active reservation is allowed per retry lineage")
+    if ledger.get("balances_known"):
+        expected_reserved = sum(item.get("active_reserved", 0) for item in reservations.values())
+        if not _is_non_negative(ledger.get("reserved")) or not math.isclose(ledger["reserved"], expected_reserved, abs_tol=1e-9):
+            raise ValueError("$.ledger.reserved: does not match active reservations")
+        if not all(_is_non_negative(ledger.get(field)) for field in ("available", "reserved", "funded_consumed", "ceiling")) or not math.isclose(ledger["available"] + ledger["reserved"] + ledger["funded_consumed"], ledger["ceiling"], abs_tol=1e-9):
+            raise ValueError("$.ledger: whole-ledger conservation failed")
+    return ledger
+
 def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> dict[str, Any]:
     """Apply one idempotent event to a copy of a ledger; never mutate its input."""
     if not isinstance(ledger, Mapping) or not isinstance(event, Mapping):
         raise TypeError("ledger and event must be mappings")
+    _validate_event(event)
     result = deepcopy(dict(ledger))
     event_id = _required_text(event.get("event_id"), "$.event.event_id")
     kind = _required_text(event.get("type"), "$.event.type")
     _required_text(event.get("transaction_id"), "$.event.transaction_id")
     if event_id in result.get("applied_event_ids", []):
-        matching = [item for collection in (result.get("history", []), result.get("failure_history", [])) for item in collection if item.get("event_id") == event_id]
+        matching = [item for collection in (result.get("history", []), result.get("failure_history", []), result.get("reconciliation_history", []), result.get("reset_history", [])) for item in collection if item.get("event_id") == event_id]
         if len(matching) != 1 or matching[0].get("event_hash") != _canonical_hash(event):
             raise ValueError(f"$.event.event_id: conflicting replay for {event_id!r}")
-        return result
+        return _validated_result(result)
 
     if kind == "reconciliation_failure":
         reason = _required_text(event.get("reason"), "$.event.reason")
@@ -116,7 +269,7 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             "reason": reason,
         })
         result.setdefault("applied_event_ids", []).append(event_id)
-        return result
+        return _validated_result(result)
 
     reservations = result.setdefault("reservations", {})
     if kind in {"start", "retry_start"}:
@@ -141,8 +294,24 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
                 raise ValueError("$.event.retry_of_reservation_id: must identify an earlier reservation")
             if prior.get("state") not in TERMINAL_STATES:
                 raise ValueError("$.event.retry_of_reservation_id: prior attempt must be terminal before retry")
-            if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt != prior.get("attempt", 0) + 1:
+            if attempt != prior.get("attempt", 0) + 1:
                 raise ValueError("$.event.attempt: retry attempt must increment the prior attempt")
+            if any(item.get("retry_of_reservation_id") == retry_of and item.get("attempt") == attempt for item in reservations.values()):
+                raise ValueError("$.event.retry_of_reservation_id: predecessor already has a successor for this attempt")
+            lineage = {retry_of}
+            changed = True
+            while changed:
+                changed = False
+                for key, item in reservations.items():
+                    if key in lineage or item.get("retry_of_reservation_id") in lineage:
+                        before = len(lineage)
+                        lineage.add(key)
+                        parent = item.get("retry_of_reservation_id")
+                        if isinstance(parent, str):
+                            lineage.add(parent)
+                        changed = changed or len(lineage) != before
+            if any(reservations[key].get("state") in ACTIVE_STATES for key in lineage if key in reservations):
+                raise ValueError("$.event.retry_of_reservation_id: retry lineage already has an active reservation")
         elif retry_of is not None or attempt != 1:
             raise ValueError("$.event: initial reservations require attempt 1 and no retry lineage")
         measurement = event.get("measurement", result.get("measurement"))
@@ -164,7 +333,7 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
         }
         _advance(result, event)
         _recompute(result)
-        return result
+        return _validated_result(result)
 
     reservation_id = event.get("reservation_id")
     if kind == "reset":
@@ -185,10 +354,10 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
         reservation["state"] = "cancelled"
         result["status"] = "degraded"
         result["accuracy_marker"] = "advisory_reset"
-        _advance(result, event, reconciliation=True)
-        result.setdefault("reset_history", []).append({"event_id": event_id, "transaction_id": event["transaction_id"], "transaction_version": result["transaction_version"], "reconciliation_version": result["reconciliation_version"], "reason": reason, "authority": authority, "evidence_ref": evidence_ref, "prior": prior})
+        _advance(result, event, reconciliation=True, record_history=False)
+        result.setdefault("reset_history", []).append({"event_id": event_id, "transaction_id": event["transaction_id"], "transaction_version": result["transaction_version"], "reconciliation_version": result["reconciliation_version"], "event_hash": _canonical_hash(event), "reason": reason, "authority": authority, "evidence_ref": evidence_ref, "prior": prior})
         _recompute(result)
-        return result
+        return _validated_result(result)
 
     reservation_id = _required_text(reservation_id, "$.event.reservation_id")
     reservation = reservations.get(reservation_id)
@@ -203,12 +372,12 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             raise ValueError("$.event.measurement: reconciliation must be observed or estimated")
         other_committed = sum(item["funded_consumed"] + item["active_reserved"] for key, item in reservations.items() if key != reservation_id)
         _settle(reservation, usage, reservation.get("state", "complete") if reservation.get("state") in TERMINAL_STATES else "complete", measurement, terminal, result["ceiling"] - other_committed)
-        _advance(result, event, reconciliation=True)
+        _advance(result, event, reconciliation=True, record_history=False)
         reconciliation_record = _history_record(event, result["transaction_version"])
         reconciliation_record["reconciliation_version"] = result["reconciliation_version"]
         result.setdefault("reconciliation_history", []).append(reconciliation_record)
         _recompute(result)
-        return result
+        return _validated_result(result)
 
     aliases = {"fail": "failed", "retry_complete": "complete"}
     target = aliases.get(kind, kind)
@@ -223,17 +392,17 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
         reservation["state"] = "unknown"
         _advance(result, event)
         _recompute(result)
-        return result
+        return _validated_result(result)
     if target == "timeout" and not terminal:
         reservation["state"] = "unknown"
         _advance(result, event)
         _recompute(result)
-        return result
+        return _validated_result(result)
     if target == "failed" and measurement == "unavailable" and not event.get("confirms_no_further_use"):
         reservation["state"] = "unknown"
         _advance(result, event)
         _recompute(result)
-        return result
+        return _validated_result(result)
     terminal = _required_text(terminal, "$.event.terminal_evidence")
     if measurement == "unavailable" and target == "complete":
         usage = reservation["active_reserved"]
@@ -245,19 +414,17 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
             reservation["state"] = "unknown"
             _advance(result, event)
             _recompute(result)
-            return result
+            return _validated_result(result)
         remainder = _number(confirmed_remainder, "$.event.confirmed_remainder")
-        if usage + remainder < reservation["active_reserved"]:
-            reservation["state"] = "unknown"
-            _advance(result, event)
-            _recompute(result)
-            return result
+        expected_remainder = max(reservation["active_reserved"] - usage, 0)
+        if not math.isclose(remainder, expected_remainder, abs_tol=1e-9):
+            raise ValueError("$.event.confirmed_remainder: must exactly equal the unused active reservation after evidenced usage")
     state = "cancelled" if target == "cancel" else "failed" if target == "timeout" else target
     other_committed = sum(item["funded_consumed"] + item["active_reserved"] for key, item in reservations.items() if key != reservation_id)
     _settle(reservation, usage, state, measurement, terminal, result["ceiling"] - other_committed)
     _advance(result, event)
     _recompute(result)
-    return result
+    return _validated_result(result)
 
 
 def _is_non_negative(value: Any) -> bool:
@@ -404,34 +571,58 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
                 if ref not in evidence:
                     errors.append(f"$.ledger.reservations.{reservation_key}.evidence_refs: missing evidence {ref!r}")
     history = ledger.get("history", [])
-    if isinstance(history, list):
-        versions = [item.get("transaction_version") for item in history if isinstance(item, Mapping)]
-        if versions != sorted(versions) or len(versions) != len(set(versions)):
-            errors.append("$.ledger.history: transaction versions must be strictly increasing")
-        if any(not isinstance(version, int) or isinstance(version, bool) or version < 0 or version > ledger.get("transaction_version", -1) for version in versions):
-            errors.append("$.ledger.history: transaction versions must be non-negative and not exceed the ledger version")
     reconciliation_history = ledger.get("reconciliation_history", [])
     reset_history = ledger.get("reset_history", [])
-    reconciliation_versions = []
-    for path, records in (("reconciliation_history", reconciliation_history), ("reset_history", reset_history)):
+    failure_history = ledger.get("failure_history", [])
+    collections = (
+        ("history", history), ("failure_history", failure_history),
+        ("reconciliation_history", reconciliation_history), ("reset_history", reset_history),
+    )
+    current_transaction = ledger.get("transaction_version", -1)
+    current_reconciliation = ledger.get("reconciliation_version", -1)
+    all_records: list[tuple[str, Mapping[str, Any]]] = []
+    reconciliation_versions: list[int] = []
+    for path, records in collections:
         if not isinstance(records, list):
             errors.append(f"$.ledger.{path}: must be an array")
             continue
-        versions = [item.get("reconciliation_version") for item in records if isinstance(item, Mapping)]
-        if versions != sorted(versions) or len(versions) != len(set(versions)):
-            errors.append(f"$.ledger.{path}: reconciliation versions must be strictly increasing")
-        reconciliation_versions.extend(versions)
-    expected_reconciliation_version = ledger.get("reconciliation_version")
-    if isinstance(expected_reconciliation_version, int) and not isinstance(expected_reconciliation_version, bool):
-        if sorted(reconciliation_versions) != list(range(1, expected_reconciliation_version + 1)):
+        mapped = [item for item in records if isinstance(item, Mapping)]
+        transaction_versions = [item.get("transaction_version") for item in mapped]
+        if transaction_versions != sorted(transaction_versions, key=lambda value: (-1 if not isinstance(value, int) or isinstance(value, bool) else value)):
+            errors.append(f"$.ledger.{path}: transaction versions must be nondecreasing")
+        if any(not isinstance(version, int) or isinstance(version, bool) or version < 0 or version > current_transaction for version in transaction_versions):
+            errors.append(f"$.ledger.{path}: transaction versions must be non-negative and must not exceed the current transaction version")
+        versioned = mapped if path != "history" else [item for item in mapped if "reconciliation_version" in item]
+        if versioned:
+            versions = [item.get("reconciliation_version") for item in versioned]
+            if versions != sorted(versions, key=lambda value: (-1 if not isinstance(value, int) or isinstance(value, bool) else value)):
+                errors.append(f"$.ledger.{path}: reconciliation versions must be nondecreasing")
+            if any(not isinstance(version, int) or isinstance(version, bool) or version < 0 or version > current_reconciliation for version in versions):
+                errors.append(f"$.ledger.{path}: reconciliation versions must be non-negative and must not exceed the current reconciliation version")
+            if path in {"reconciliation_history", "reset_history"}:
+                reconciliation_versions.extend(version for version in versions if isinstance(version, int) and not isinstance(version, bool))
+        all_records.extend((path, item) for item in mapped)
+    if isinstance(current_reconciliation, int) and not isinstance(current_reconciliation, bool):
+        if sorted(reconciliation_versions) != list(range(1, current_reconciliation + 1)):
             errors.append("$.ledger.reconciliation_version: history count and versions must exactly match reconciliation_version")
-    failure_history = ledger.get("failure_history", [])
-    if not isinstance(failure_history, list):
-        errors.append("$.ledger.failure_history: must be an array")
+    event_records: dict[str, tuple[str, Any]] = {}
+    for path, record in all_records:
+        event_id = record.get("event_id")
+        if not isinstance(event_id, str):
+            continue
+        event_hash = record.get("event_hash")
+        if event_id in event_records:
+            previous_path, previous_hash = event_records[event_id]
+            if previous_hash != event_hash:
+                errors.append(f"$.ledger.{path}: event ID {event_id!r} has a conflicting event hash with {previous_path}")
+            else:
+                errors.append(f"$.ledger.{path}: event ID {event_id!r} is duplicated across histories")
+        else:
+            event_records[event_id] = (path, event_hash)
     applied_ids = ledger.get("applied_event_ids", [])
-    recorded_ids = [item.get("event_id") for collection in (history if isinstance(history, list) else [], failure_history if isinstance(failure_history, list) else []) for item in collection if isinstance(item, Mapping)]
+    recorded_ids = list(event_records)
     if isinstance(applied_ids, list) and (len(applied_ids) != len(set(applied_ids)) or set(applied_ids) != set(recorded_ids)):
-        errors.append("$.ledger.applied_event_ids: must uniquely match transaction and failure history event IDs")
+        errors.append("$.ledger.applied_event_ids: must uniquely match all history event IDs")
     measurement, enforcement = ledger.get("measurement"), ledger.get("enforcement")
     if enforcement in {"local_enforced", "provider_enforced"} and (measurement != "observed" or not ledger.get("measurement_source")):
         errors.append("$.ledger.enforcement: enforced ledgers require observed measurement and a source")
@@ -476,6 +667,33 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
             errors.append(f"$.ledger.reservations.{key}.terminal_evidence: terminal state requires evidence")
         elif terminal_evidence and terminal_evidence not in evidence:
             errors.append(f"$.ledger.reservations.{key}.terminal_evidence: missing registry evidence {terminal_evidence!r}")
+    successors: dict[tuple[str, Any], str] = {}
+    for key, reservation in reservations.items():
+        if not isinstance(reservation, Mapping) or reservation.get("kind") != "retry":
+            continue
+        successor_key = (reservation.get("retry_of_reservation_id"), reservation.get("attempt"))
+        if successor_key in successors:
+            errors.append(f"$.ledger.reservations.{key}: retry predecessor/attempt already has successor {successors[successor_key]!r}")
+        else:
+            successors[successor_key] = key
+    roots: dict[str, str] = {}
+    for key in reservations:
+        current = key
+        seen: set[str] = set()
+        while current in reservations and current not in seen:
+            seen.add(current)
+            parent = reservations[current].get("retry_of_reservation_id") if isinstance(reservations[current], Mapping) else None
+            if not isinstance(parent, str):
+                break
+            current = parent
+        roots[key] = current
+    active_by_root: dict[str, list[str]] = {}
+    for key, reservation in reservations.items():
+        if isinstance(reservation, Mapping) and reservation.get("state") in ACTIVE_STATES:
+            active_by_root.setdefault(roots.get(key, key), []).append(key)
+    for root, active in active_by_root.items():
+        if len(active) > 1:
+            errors.append(f"$.ledger.reservations: retry lineage {root!r} has more than one active reservation: {active!r}")
     if _is_non_negative(ledger.get("unfunded_consumed")) and ledger.get("unfunded_consumed", 0) > 0 and ledger.get("status") not in {"degraded", "blocked"}:
         errors.append("$.ledger.status: unfunded consumption requires degraded or blocked status")
     return errors
