@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -34,6 +36,72 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertEqual(entry["version"], project["version"])
         self.assertEqual(entry["source"], project["claudeMarketplaceSource"])
         self.assertEqual(entry["homepage"], project["repository"])
+
+    def test_release_120_metadata_and_integrated_paths_are_canonical(self):
+        project = json.loads(PROJECT_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(project["plugin"]["version"], "1.2.0")
+
+        expected_paths = {
+            "orchestrationConfig": "config/orchestration.json",
+            "orchestrationSchema": "config/orchestration.schema.json",
+            "teamRegistrySchema": "config/team-registry.schema.json",
+            "allocationLedgerSchema": "config/allocation-ledger.schema.json",
+            "routingScenarios": "tests/team-routing.json",
+            "behavioralScenarios": "tests/behavioral-acceptance.json",
+            "evaluationManifest": "tests/evaluation-manifest.json",
+            "routingEvaluator": "scripts/evaluate_routing.py",
+            "behavioralEvaluator": "scripts/evaluate_behavior.py",
+            "orchestrationValidator": "scripts/validate_orchestration.py",
+            "capabilityValidator": "scripts/capability_matrix.py",
+        }
+        for key, relative_path in expected_paths.items():
+            self.assertEqual(project["paths"].get(key), relative_path, key)
+            self.assertTrue((ROOT / relative_path).is_file(), relative_path)
+
+        manifests = [
+            json.loads((ROOT / "plugin.json").read_text(encoding="utf-8")),
+            json.loads((ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8")),
+            json.loads((ROOT / ".claude-plugin/plugin.json").read_text(encoding="utf-8")),
+        ]
+        self.assertEqual({manifest["version"] for manifest in manifests}, {"1.2.0"})
+        claude_marketplace = json.loads(
+            (ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(claude_marketplace["plugins"][0]["version"], "1.2.0")
+
+        codex_marketplace = json.loads(
+            (ROOT / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
+        )
+        codex_entry = codex_marketplace["plugins"][0]
+        self.assertNotIn("version", codex_entry)
+        self.assertEqual(
+            codex_entry["source"],
+            {"source": "local", "path": "./"},
+        )
+        self.assertEqual(
+            codex_entry["policy"],
+            {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+        )
+        self.assertEqual(codex_entry["category"], "Productivity")
+
+    def test_integrated_validator_runs_task_one_through_seven_structural_gates(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/validate.py")],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for evidence in [
+            "Orchestration configuration: PASSED",
+            "Team routing: PASSED",
+            "Orchestration state: PASSED",
+            "Capability contracts: PASSED",
+            "Behavioral structure: PASSED",
+            "Fresh-host behavioral acceptance: UNVERIFIED (Task 10)",
+        ]:
+            self.assertIn(evidence, result.stdout)
 
     def test_skill_is_small_and_trigger_focused(self):
         text = (SKILL_DIR / "SKILL.md").read_text()

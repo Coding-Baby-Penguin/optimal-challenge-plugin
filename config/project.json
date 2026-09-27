@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "plugin": {
     "name": "optimal-challenge",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "repository": "https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin",
     "portableSchema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
     "codexSkillsPath": "./skills/",
@@ -15,7 +15,18 @@
     "scenarios": "tests/scenarios.json",
     "validationTest": "tests/validation/test_package.py",
     "state": "docs/PROJECT-STATE.md",
-    "package": "dist/optimal-challenge-plugin-1.1.0.zip"
+    "package": "dist/optimal-challenge-plugin-1.2.0.zip",
+    "orchestrationConfig": "config/orchestration.json",
+    "orchestrationSchema": "config/orchestration.schema.json",
+    "teamRegistrySchema": "config/team-registry.schema.json",
+    "allocationLedgerSchema": "config/allocation-ledger.schema.json",
+    "routingScenarios": "tests/team-routing.json",
+    "behavioralScenarios": "tests/behavioral-acceptance.json",
+    "evaluationManifest": "tests/evaluation-manifest.json",
+    "routingEvaluator": "scripts/evaluate_routing.py",
+    "behavioralEvaluator": "scripts/evaluate_behavior.py",
+    "orchestrationValidator": "scripts/validate_orchestration.py",
+    "capabilityValidator": "scripts/capability_matrix.py"
   },
   "commands": {
     "validate": "python scripts/validate.py",

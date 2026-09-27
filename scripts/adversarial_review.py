@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+from evaluate_routing import validate_manifest as validate_routing_manifest
+
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "optimal-challenge" / "SKILL.md"
 REFDIR = SKILL.parent / "references"
@@ -38,10 +40,46 @@ for phrase in [
 ]:
     require(phrase in combined.lower(), f"Missing critical guardrail: {phrase}")
 
+# Agent teams and review remain conditional, never universal defaults.
+router_lower = skill.lower()
+for forbidden in [
+    "always spawn", "always delegate", "always create a team",
+    "always require independent review", "review every task independently",
+]:
+    require(forbidden not in router_lower, f"Unconditional costly behavior in runtime router: {forbidden}")
+
+# Persistence and budget claims must match the committed closed configuration.
+orchestration = json.loads((ROOT / "config" / "orchestration.json").read_text(encoding="utf-8"))
+privacy = orchestration.get("persistence_privacy", {})
+require(privacy.get("persist_transcripts") is False, "Transcript persistence must default false")
+require(privacy.get("persist_sensitive_data") is False, "Sensitive-data persistence must default false")
+budget = orchestration.get("budget", {})
+require(budget.get("enforcement") == "advisory", "Committed budget enforcement must remain advisory")
+team_policy = (REFDIR / "team-orchestration.md").read_text(encoding="utf-8").lower()
+require("never promise automatic prevention" in team_policy, "Advisory budget policy overclaims enforcement")
+for forbidden in ["advisory budget prevents", "advisory ceiling guarantees", "automatic budget enforcement"]:
+    require(forbidden not in combined.lower(), f"Advisory budget represented as enforced: {forbidden}")
+
 # Ensure no plugin code or config silently activates external services/hooks/agents.
 for forbidden_path in [".mcp.json", "hooks/hooks.json", "agents", "monitors/monitors.json", ".lsp.json", "settings.json"]:
     p = ROOT / forbidden_path
     require(not p.exists(), f"Unexpected active component in lightweight v1: {forbidden_path}")
+
+# Calculation labels cannot drift from executable routing, and every new schema/template is owned.
+try:
+    validated_routes = validate_routing_manifest(ROOT / "tests" / "team-routing.json")
+    require(validated_routes > 0, "Team routing evaluator validated no cases")
+except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    issues.append(f"Calculation/route disagreement: {exc}")
+
+project = json.loads((ROOT / "config" / "project.json").read_text(encoding="utf-8"))
+for key in ["orchestrationSchema", "teamRegistrySchema", "allocationLedgerSchema"]:
+    relative = project.get("paths", {}).get(key)
+    require(isinstance(relative, str) and (ROOT / relative).is_file(), f"Orphan or missing schema path: {key}")
+for template in ["TEAM-CHARTER.md", "TEAMMATE-CAPSULE.yaml", "RETURN-CAPSULE.yaml", "task-capsule.yaml", "QUESTION-BUNDLE.md"]:
+    path = SKILL.parent / "templates" / template
+    require(path.is_file(), f"Missing team template: {template}")
+    require(f"templates/{template}".lower() in combined.lower(), f"Orphan team template: {template}")
 
 # Validate manifest fields against the current minimal documented constraints used by this package.
 portable = json.loads((ROOT / "plugin.json").read_text())
@@ -66,3 +104,4 @@ print("ADVERSARIAL REVIEW PASSED")
 print(f"Reference modules: {len(all_refs)}; all are explicitly lazy-addressable from SKILL.md")
 print("No active hooks, MCP servers, agents, monitors, LSP servers, or default settings shipped")
 print("Two-sided regression cases present for delegation, evolution, and hooks")
+print("Agent-team adversarial checks passed: conditional spawning/review, budget truth, routing agreement, and owned schemas/templates")

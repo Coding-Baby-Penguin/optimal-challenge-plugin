@@ -17,6 +17,54 @@ A lightweight always-on routing skill/plugin. It handles simple requests directl
 - **Adaptive, not bloated:** repeated patterns may become preferences, instructions, specialist skills, hooks, or tooling; one-off events do not.
 - **Platform-aware storage:** exploit filesystem/git in local repo environments and durable project/cloud storage in chat-oriented environments.
 
+## Choose how it runs
+
+The default is `mode=auto`, `profile=balanced`. Stable, single-step, low-risk requests stay inline and silent: no profile question, premise score, or team bookkeeping appears. You can set one request in plain language, for example:
+
+> For this task: team-requested, Quality profile, exactly 2 specialists, with a 40,000-token advisory ceiling.
+
+| Invocation | Meaning |
+|---|---|
+| `inline-only` | Use no specialists. A conflicting mandatory independent-review requirement produces one resolution question, never a silent spawn. |
+| `auto` | Delegate only when the evidence-backed benefit clears the active profile margin and allocation is available. |
+| `team-requested` | Prefer a useful team, but still challenge wasteful, unsafe, unavailable, or unfunded work. |
+| `exact specialists=N` | Request `N` additional workers beyond the coordinator, from 0 through `min(32, detected_host_max)`. A count that cannot be satisfied is reported, not silently changed. |
+
+An ambiguous request such as "a team of three" is resolved from clear context or with one material count question. If the request also says `inline-only`, the plugin asks one concise resolution question. Persistent user-controlled overrides belong in the ignored `.optimal-challenge/orchestration.local.json`; committed repository defaults live in [`config/orchestration.json`](config/orchestration.json). Current-request constraints outrank both.
+
+## Profiles and routing calculations
+
+Profiles tune tradeoffs; they never override correctness, safety, privacy, explicit authority, or mandatory verification.
+
+| Profile | Quality | Cost | Latency | Attention | Rework | Delegation margin | Optional-review margin |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Economy | 0.35 | 0.35 | 0.10 | 0.10 | 0.10 | 3 | 6 |
+| Balanced | 0.45 | 0.20 | 0.10 | 0.10 | 0.15 | 1 | 3 |
+| Quality | 0.50 | 0.10 | 0.05 | 0.10 | 0.25 | 1 | 1 |
+| Custom | normalized user weights | | | | | 1–12 | 1–27 |
+
+Delegation uses `D(t) = benefits − costs`, where benefits cover expected quality, parallelism, context containment, and verification, while costs cover coordination, contention, integration, and failure risk. It proceeds only when `D(t)` clears the profile margin; ties stay inline. Route comparison normalizes quality, whole-job cost, latency, user attention, and expected rework. Whole-job cost includes input, cache write/read, output, and tool use; unavailable measurements remain `unknown` and cannot support a cost-saving claim.
+
+## Better questions, not more questions
+
+The premise gate runs only after the direct fast path is rejected. It records `PremiseRisk = WrongnessLikelihoodRating × ReworkCost` and `QuestionValue = ExpectedReworkAvoided − UserAttentionCost`. The plugin investigates cheap facts first, uses a safe reversible default when possible, and asks only when risk is at least 4, question value is positive, and the answer changes the work graph or an irreversible choice.
+
+When input is genuinely required, all currently knowable user-only blockers appear in one bundle with a recommended default, impact, safe work that can continue, and next steps. Material answers receive stable decision IDs; a settled decision is not asked again unless new contradictory evidence is cited. Mode, profile, and budget are not exposed merely for configuration theatre.
+
+## Budget assignment and truthfulness
+
+Budget fields always name their unit (`tokens`, `credits`, time, currency, tool calls, or model calls), limit, measurement (`observed`, `estimated`, or `unavailable`), source, and enforcement (`advisory`, `local_enforced`, or `provider_enforced`). Units are never converted without a verified mapping.
+
+The allocation ledger can reserve coordinator, worker, tool, retry, integration, and mandatory-review capacity. It preserves `available + reserved + funded_consumed = ceiling`; over-ceiling use is tracked separately as unfunded consumption, never turned into false availability. At a soft threshold, optional parallelism or optional review is reduced before mandatory verification.
+
+The committed default is advisory. An advisory ceiling stops the next discretionary operation but does not automatically prevent provider spend, cancel running work, or prove the exact remaining balance. Local/provider enforcement is claimed only when the exact host surface and version supply fresh trusted observed usage plus the matching stop primitive. If mandatory enforcement is unavailable, the result is `Blocked` before spend or one route/limit decision; accepting advisory operation is explicitly `Degraded`.
+
+## Continuity and selective review
+
+Each specialist has a logical identity separate from a provider session. The coordinator chooses among native resume, rehydrating the same logical role from a compact capsule, or a fresh independent worker. Source, tests, explicit decisions, and [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) outrank registry or conversation memory. Disposable registry/ledger state stays under ignored `.optimal-challenge/`; raw transcripts, secrets, and sensitive traits do not enter committed capsules.
+
+Review is selective: `ReviewValue = P(defect) × Impact × P(review detects defect) − ReviewCost`. Strong deterministic oracles handle reversible mechanical work; a fresh reviewer handles material judgment when value clears the profile margin. Consequential weak-oracle work can require independent review. If that reviewer is unavailable, the plugin reports `Blocked`, or `Degraded` only after an accepted named compensating oracle—never silent self-approval.
+
 ## Core runtime improvements
 
 These behaviors belong to the plugin. The repository files document, template, and test them so they remain available across releases.
@@ -55,11 +103,19 @@ optimal-challenge/
 │   ├── SKILL.md                    small runtime router
 │   ├── references/                 lazily loaded policy modules
 │   └── templates/                  checkpoint, question, snippet, state, and capsule templates
-├── scripts/validate.py             dependency-free package validator
+├── scripts/
+│   ├── validate.py                 integrated Task 1–7 structural gate
+│   ├── evaluate_routing.py         executable premise/delegation/review calculations
+│   ├── validate_orchestration.py   registry/ledger schema and invariant gate
+│   ├── capability_matrix.py        trusted surface capability resolution
+│   └── evaluate_behavior.py        recorded fresh-host run evaluator
 └── tests/
-    ├── scenarios.json              trigger/anti-trigger evaluation matrix
+    ├── scenarios.json              structural trigger/anti-trigger matrix
+    ├── team-routing.json           deterministic routing cases
+    ├── behavioral-acceptance.json  fresh-host acceptance contract
+    ├── evaluation-manifest.json    pinned A/B/C/D evaluation identity
     └── validation/
-        └── test_package.py         independent structural/policy checks
+        └── test_package.py         integrated package checks
 ```
 
 ## Install / test
@@ -118,14 +174,24 @@ The skill appears under the plugin namespace. Implicit model invocation remains 
 
 ```bash
 python scripts/validate.py
-python -m unittest -v tests.validation.test_package
+python -m unittest discover -v
+python scripts/adversarial_review.py
+python scripts/evaluate_routing.py tests/team-routing.json
 ```
 
-The validator checks manifest consistency, skill frontmatter, reference integrity, word/description budgets, path safety, scenario coverage, and that no active hooks ship in v1.1.
+Use Python 3.12 and install pinned development-only schema dependencies from `requirements-dev.txt` into a disposable target as shown in [`config/README.md`](config/README.md). The integrated validator checks manifest consistency, routing calculations, valid orchestration state, capability contracts, behavioral fixture identity, skill/reference integrity, and the absence of active components. It reports fresh-host behavioral acceptance as `UNVERIFIED` until Task 10 supplies isolated recorded runs; structural success is not host-model proof.
 
 ## Configuration
 
 Project-maintenance values are defined once in [`config/project.json`](config/project.json) and documented in [`config/README.md`](config/README.md). Platform-required manifests remain in their required locations and are validated against that central configuration. Real secrets never belong in committed configuration.
+
+The supported one-line programmatic task override is:
+
+```python
+load_effective_config(root, task_override={"mode": "team-requested", "profile": "quality"})
+```
+
+Always use `load_effective_config(...)`; do not manually merge built-ins, committed defaults, the ignored local override, and the current request.
 
 ## Adaptation and self-improvement
 
@@ -133,7 +199,7 @@ Normal tasks should write at most a tiny experience delta when the host/workflow
 
 A skill improvement may be evaluated autonomously, but **actual self-modification requires a writable versioned skill/plugin workspace**. An installed/hosted immutable ZIP cannot safely rewrite itself; in that environment the workflow records an evolution candidate for the next packaging/deployment cycle instead of pretending a change was deployed.
 
-No active hooks are included in v1.1. This is intentional: hooks are promoted only after a deterministic recurring pattern proves their per-trigger cost worthwhile.
+No active hooks, MCP servers, monitors, or background services are included in v1.2. This is intentional: active components are promoted only after a deterministic recurring pattern proves their per-trigger cost worthwhile.
 
 ## Suggested state placement
 
@@ -146,4 +212,6 @@ On resume, compare the project-state file with the source tree and current versi
 
 ## Verification note
 
-The included automated tests verify package structure and policy invariants. Behavioral skill triggering ultimately depends on the host model, installed specialist skills, and available tools, so `tests/scenarios.json` is also included as a regression suite for model-level evaluation in Codex/Claude when available.
+The included automated tests verify package structure, formulas, state invariants, policy boundaries, and evaluation-data integrity. They do not prove that every host model will route identically or that a provider enforces an advisory ceiling. Codex local, OpenAI API/Agents SDK, Claude Code local, and Anthropic API/Agent SDK capabilities remain `policy-only` or `unsupported` until exact-surface/version evidence and fresh isolated acceptance runs exist.
+
+Required failures use `Succeeded`, `Failed`, `Partial`, `Blocked`, or `Degraded`. A non-success result includes the failed operation, evidence, impact, retry/fallback state, and one recovery action. Exit code 0, a queued operation, or an upload acknowledgement alone is never completion evidence.

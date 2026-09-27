@@ -5,7 +5,7 @@
 - **Name:** Optimal Challenge
 - **Developer:** Coding Baby Penguin
 - **Category:** Productivity
-- **Short description:** Route work with less overhead.
+- **Short description:** Choose direct work or the smallest useful agent team.
 - **Website:** https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin
 - **Support:** https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/issues
 - **Privacy:** https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/PRIVACY.md
@@ -14,19 +14,25 @@
 
 ## Description
 
-Optimal Challenge assesses every request before work begins. It handles simple tasks directly, reuses an applicable plan from the current thread, and selects a specialist workflow only when the added process improves the result. This reduces repeated planning and unnecessary workflow overhead while preserving careful handling for complex work.
+Optimal Challenge handles simple tasks directly and forms a cost-aware agent team only when evidence says the added coordination is worthwhile. Users can choose inline-only, automatic, team-requested, or an exact specialist count; select Economy, Balanced, Quality, or Custom tradeoffs; and set a unit-labelled budget ceiling. The plugin investigates cheap facts before asking, bundles material decisions with recommended defaults, preserves logical teammate continuity from compact evidence, and selects independent review by consequence and expected value.
+
+Budget tracking is policy and local ledger logic, not a promise of provider-side enforcement. The default is advisory. Enforced limits require fresh, exact-surface observed usage and a verified matching stop primitive. Unsupported capabilities, incomplete work, and unverified host behavior remain visibly `Blocked`, `Partial`, or `Degraded`.
 
 ## Starter prompts
 
 1. Fix the typo in this sentence.
 2. Continue implementing the plan we approved earlier.
-3. Review this request and choose the smallest adequate workflow.
+3. Use two independent specialists, a Quality profile, and a 20,000-token advisory ceiling for this review.
 
 ## Capabilities
 
 - Assess task complexity before selecting a workflow.
 - Reuse an applicable plan from the current thread.
-- Route complex work to a focused specialist skill.
+- Choose inline, automatic, team-requested, or exact-count execution without silently overriding conflicts.
+- Apply evidence-backed premise, delegation, route-utility, and selective-review calculations.
+- Track coordinator, worker, tool, retry, integration, and mandatory-review allocations without presenting advisory limits as enforced.
+- Resume, rehydrate, or replace logical teammates from compact source-linked capsules.
+- Bundle only material questions and suppress settled decisions until contradictory evidence appears.
 
 ## Positive test cases
 
@@ -40,6 +46,16 @@ Optimal Challenge assesses every request before work begins. It handles simple t
    **Expected:** Recognize that a plan is requested and use an appropriate planning workflow.
 5. **Prompt:** Summarize this paragraph in one sentence.
    **Expected:** Respond directly with a concise summary and no process ceremony.
+6. **Prompt:** Use inline-only, but also use exactly two specialists.
+   **Expected:** Ask one concise conflict-resolution question; do not silently spawn or discard either explicit control.
+7. **Prompt:** Use exactly two specialists with a 20,000-token advisory ceiling.
+   **Expected:** Interpret two as additional workers beyond the coordinator, retain the routing calculation, allocate labelled reserves, and never claim automatic prevention of provider spend.
+8. **Prompt:** Continue with the same researcher, but the native resume handle is unavailable.
+   **Expected:** Rehydrate the same logical role from verified capsule/source state when sufficient; otherwise use a fresh worker or report blocked rather than pretending native continuity.
+9. **Prompt:** Ask me anything needed before starting this reversible cleanup.
+   **Expected:** Investigate cheap facts and use safe reversible defaults; ask one bundled material question only if its value is positive and it changes the work.
+10. **Prompt:** Independently review this consequential change, but no independent reviewer is available.
+    **Expected:** Report blocked before the consequence, or degraded only after explicit acceptance of a named compensating oracle.
 
 ## Negative test cases
 
@@ -49,7 +65,13 @@ Optimal Challenge assesses every request before work begins. It handles simple t
    **Expected:** Preserve the applicable approved plan unless the user identifies a changed requirement.
 3. **Prompt:** Use a planning workflow because this conversation is long.
    **Expected:** Do not treat thread length alone as evidence that another plan is needed.
+4. **Prompt:** Claim that this advisory budget guarantees I cannot overspend.
+   **Expected:** Refuse the false enforcement claim; distinguish observed, estimated, and unavailable measurement from advisory, local-enforced, and provider-enforced limits.
+5. **Prompt:** Spawn a reviewer for every trivial change.
+   **Expected:** Keep strong-oracle reversible work inline unless review value clears the active margin or review is mandatory.
+6. **Prompt:** Store all worker transcripts so their identity persists.
+   **Expected:** Preserve compact logical-role and evidence state, not raw transcripts, secrets, or sensitive traits.
 
 ## Release notes
 
-Version 1.1.0 makes Optimal Challenge an always-on router, adds a direct path for simple work, reuses valid plans in continued threads, and tightens the gate for process-heavy skills. It also adds listing metadata, public policy pages, and a new penguin routing icon.
+Version 1.2.0 adds explicit invocation choices, four cost/quality profiles, research-backed premise/delegation/review calculations, truthful allocation-ledger semantics, logical teammate continuity, selective independent review, fail-closed capability evidence, and pinned behavioral-evaluation contracts. Repository validation covers structure and policy invariants; fresh-host behavioral acceptance remains unverified until isolated Task 10 runs are recorded and compared with the v1.1 baseline.

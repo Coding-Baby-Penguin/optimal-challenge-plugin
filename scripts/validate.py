@@ -7,10 +7,17 @@ import re
 import sys
 from pathlib import Path
 
+import capability_matrix
+import evaluate_behavior
+from evaluate_routing import validate_manifest as validate_routing_manifest
+from orchestration_config import load_effective_config, validate_config
+from orchestration_state import validate_orchestration_state
+
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CONFIG_PATH = ROOT / "config" / "project.json"
 
 errors: list[str] = []
+integrated_evidence: list[str] = []
 
 
 def check(cond: bool, msg: str) -> None:
@@ -40,6 +47,78 @@ expected_codex_skills_path = plugin_config.get("codexSkillsPath")
 expected_claude_marketplace_schema = plugin_config.get("claudeMarketplaceSchema")
 expected_claude_marketplace_name = plugin_config.get("claudeMarketplaceName")
 expected_claude_marketplace_source = plugin_config.get("claudeMarketplaceSource")
+
+
+def configured_path(key: str, fallback: str) -> Path:
+    value = path_config.get(key, fallback)
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"config/project.json paths.{key} must be a non-empty string")
+        value = fallback
+    return ROOT / value
+
+
+def run_integrated_checks() -> None:
+    """Run Task 1-7 structural contracts without claiming host behavior."""
+
+    try:
+        config = load_effective_config(ROOT)
+        config_errors = validate_config(config)
+        if config_errors:
+            errors.extend(f"Orchestration configuration: {error}" for error in config_errors)
+        else:
+            integrated_evidence.append("Orchestration configuration: PASSED")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"Orchestration configuration: {exc}")
+
+    try:
+        count = validate_routing_manifest(configured_path("routingScenarios", "tests/team-routing.json"))
+        integrated_evidence.append(f"Team routing: PASSED ({count} cases)")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"Team routing: {exc}")
+
+    try:
+        registry = read_json(ROOT / "tests/fixtures/orchestration/valid-registry.json")
+        ledger = read_json(ROOT / "tests/fixtures/orchestration/valid-ledger.json")
+        for key, fallback in (
+            ("teamRegistrySchema", "config/team-registry.schema.json"),
+            ("allocationLedgerSchema", "config/allocation-ledger.schema.json"),
+        ):
+            schema = read_json(configured_path(key, fallback))
+            if not isinstance(schema, dict) or not schema.get("$schema"):
+                errors.append(f"Orchestration state: {key} is not a declared JSON Schema")
+        state_errors = validate_orchestration_state(registry, ledger)
+        if state_errors:
+            errors.extend(f"Orchestration state: {error}" for error in state_errors)
+        elif not any(error.startswith("Orchestration state:") for error in errors):
+            integrated_evidence.append("Orchestration state: PASSED")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"Orchestration state: {exc}")
+
+    expected_surfaces = {
+        "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
+    }
+    expected_capabilities = {
+        "native_resume", "pause_cancel", "usage_measurement", "local_enforcement",
+        "provider_enforcement", "persistence_privacy", "parallel_execution", "tracing",
+    }
+    if set(capability_matrix.TRUSTED_LIVE_ADAPTERS) != expected_surfaces:
+        errors.append("Capability contracts: trusted adapter surfaces are incomplete")
+    if set(capability_matrix.CAPABILITY_FALLBACKS) != expected_capabilities:
+        errors.append("Capability contracts: fallback coverage is incomplete")
+    if not any(error.startswith("Capability contracts:") for error in errors):
+        integrated_evidence.append("Capability contracts: PASSED")
+
+    try:
+        manifest = read_json(configured_path("evaluationManifest", "tests/evaluation-manifest.json"))
+        behavioral_errors = evaluate_behavior._manifest_errors(manifest)
+        if behavioral_errors:
+            errors.extend(f"Behavioral structure: {error}" for error in behavioral_errors)
+        else:
+            integrated_evidence.append("Behavioral structure: PASSED")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"Behavioral structure: {exc}")
+
+    integrated_evidence.append("Fresh-host behavioral acceptance: UNVERIFIED (Task 10)")
 
 
 # Required structure
@@ -203,6 +282,8 @@ if isinstance(scenarios, list):
 for forbidden in ["claude-opus", "gpt-", "~/.claude", "~/.codex"]:
     check(forbidden not in body.lower(), f"Runtime core contains platform-specific detail: {forbidden}")
 
+run_integrated_checks()
+
 if errors:
     print("VALIDATION FAILED")
     for e in errors:
@@ -214,3 +295,5 @@ print(f"Runtime skill words: {word_count}")
 print(f"Referenced lazy modules: {len(refs)}")
 print(f"Behavior scenarios: {len(scenarios)}")
 print("Active hooks: 0")
+for evidence in integrated_evidence:
+    print(evidence)

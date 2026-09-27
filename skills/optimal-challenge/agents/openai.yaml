@@ -1,6 +1,6 @@
 interface:
   display_name: "Optimal Challenge"
-  short_description: "Routes every request to the smallest adequate workflow."
-  default_prompt: "Assess this request and use the smallest adequate workflow."
+  short_description: "Chooses direct work or the smallest useful agent team."
+  default_prompt: "Assess this request, reuse verified state, and choose direct work or a cost-aware agent team without claiming automatic budget enforcement."
 policy:
   allow_implicit_invocation: true
