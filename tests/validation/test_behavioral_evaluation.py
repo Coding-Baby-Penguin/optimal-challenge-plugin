@@ -290,8 +290,8 @@ class EvaluationArtifactTests(unittest.TestCase):
         categories = {case["category"] for case in cases}
         self.assertTrue({"direct", "premise", "invocation", "profile", "continuity", "budget", "review", "capability-fallback", "failure"} <= categories)
         required_routes = {
-            "direct", "investigate", "default", "ask", "inline", "auto", "team-requested",
-            "exact-specialists", "resolution-question", "resume", "rehydrate", "fresh", "blocked", "degraded",
+            "direct", "investigate", "default", "ask", "inline", "auto", "delegate",
+            "resolution-question", "resume", "rehydrate", "fresh", "blocked", "degraded",
         }
         self.assertTrue(required_routes <= {case["expected_route"] for case in cases})
         profiles = {case["config"].get("profile") for case in cases}
@@ -342,6 +342,14 @@ class EvaluationArtifactTests(unittest.TestCase):
             self.assertRegex(arm["archive_sha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(set(arm["policy_overrides"]), {"release", "delegation", "continuity", "premise_gate"})
         self.assertTrue(stored["arms"][1]["evaluation_only"])
+
+    def test_approved_fixture_identity_is_independent_of_manifest_and_fixture(self):
+        self.assertEqual(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_VERSION, 1)
+        self.assertRegex(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_SHA256, r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_SHA256,
+            "e34cd0817e41568312520460fc5f7dc9d94a17a81848e5f7ba71ebd8e124ea79",
+        )
 
     def test_v11_baseline_is_truthfully_unverified(self):
         baseline = json.loads((ROOT / "tests/baselines/v1.1.json").read_text(encoding="utf-8"))
@@ -484,6 +492,53 @@ class ReviewerRegressionTests(unittest.TestCase):
         candidate["manifest_sha256"] = manifest_digest(altered_manifest)
         self.assertIn("exactly", " ".join(self.evaluator.validate_run_bundle(candidate, altered_manifest)).lower())
 
+    def test_coordinated_on_disk_fixture_manifest_and_bundle_mutation_fails_approval_pin(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            modified = acceptance()
+            modified["cases"][0]["rubric"]["quality"] = "tampered quality anchor"
+            fixture_path = Path(temp_dir) / "behavioral-acceptance.json"
+            fixture_path.write_text(json.dumps(modified), encoding="utf-8")
+            changed_hash = hashlib.sha256(fixture_path.read_bytes()).hexdigest()
+            altered_manifest = manifest()
+            altered_manifest["fixture_hashes"]["behavioral_acceptance"] = changed_hash
+            candidate = bundle()
+            candidate["fixture_hashes"]["behavioral_acceptance"] = changed_hash
+            candidate["manifest_sha256"] = manifest_digest(altered_manifest)
+            for record in candidate["runs"]:
+                if record["scenario_id"] == modified["cases"][0]["id"]:
+                    record["case_contract"] = deepcopy(modified["cases"][0])
+                    record["case_sha256"] = manifest_digest(modified["cases"][0])
+                    record["rubric_contract"]["quality"] = "tampered quality anchor"
+            key = ("fixture_hashes", "behavioral_acceptance")
+            original_path = self.evaluator.CANONICAL_FILES[key]
+            self.evaluator.CANONICAL_FILES[key] = fixture_path
+            try:
+                errors = " ".join(self.evaluator.validate_run_bundle(candidate, altered_manifest)).lower()
+            finally:
+                self.evaluator.CANONICAL_FILES[key] = original_path
+        self.assertIn("approved behavioral fixture", errors)
+
+    def test_named_profile_delegation_cases_match_task_two_routes_and_counts(self):
+        cases = {case["id"]: case for case in acceptance()["cases"]}
+        expected = {
+            "accept-profile-economy": (1, 3, "inline", 0),
+            "accept-profile-balanced": (1, 1, "delegate", 1),
+            "accept-profile-quality": (1, 1, "delegate", 1),
+        }
+        for case_id, (value, margin, route, count) in expected.items():
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                semantic = case["calculation_assertions"]["semantic_contract"]
+                inputs = semantic["canonical_inputs"]
+                benefits = sum(inputs[f"benefit_{name}"] for name in ("parallel", "independence", "context", "quality"))
+                costs = sum(inputs[f"cost_{name}"] for name in ("setup", "transfer", "merge", "review_rework"))
+                self.assertEqual(benefits - costs, value)
+                self.assertEqual(inputs["margin"], margin)
+                self.assertEqual(case["expected_route"], route)
+                self.assertEqual(case["expected_spawn_count"], count)
+                self.assertEqual(semantic["expected"]["route"], route)
+                self.assertEqual(semantic["expected"]["specialist_count"], count)
+
     def test_missing_structured_question_calculation_rubric_and_evidence_fields_fail(self):
         fields = (
             "question_result",
@@ -624,7 +679,9 @@ class ReviewerRegressionTests(unittest.TestCase):
                 self.assertEqual(expected["delegation_value"], value)
                 approved = value > 0 and value >= inputs["margin"] and max(terms) >= 2
                 approved = approved and all(inputs[name] for name in ("observable_done_condition", "fits_job_envelope", "platform_available", "authority_allows"))
-                self.assertEqual(expected["route"], inputs["route_if_approved"] if approved else "inline")
+                approved = approved and inputs["available_specialist_slots"] >= 1
+                self.assertEqual(expected["route"], "delegate" if approved else "inline")
+                self.assertEqual(expected["specialist_count"], 1 if approved else 0)
             elif formula == "utility.whole-job.v1":
                 weights = {name: inputs[f"weight_{name}"] for name in named_weights[inputs["profile"]]}
                 self.assertEqual(weights, named_weights[inputs["profile"]])

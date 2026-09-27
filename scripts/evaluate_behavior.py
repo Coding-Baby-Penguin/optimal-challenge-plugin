@@ -60,6 +60,8 @@ CANONICAL_FILES = {
     ("fixture_hashes", "team_routing"): ROOT / "tests" / "team-routing.json",
     (None, "config_sha256"): ROOT / "config" / "orchestration.json",
 }
+APPROVED_BEHAVIORAL_FIXTURE_VERSION = 1
+APPROVED_BEHAVIORAL_FIXTURE_SHA256 = "e34cd0817e41568312520460fc5f7dc9d94a17a81848e5f7ba71ebd8e124ea79"
 KNOWN_SURFACES = frozenset({
     "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
 })
@@ -149,6 +151,11 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
         if pinned != actual:
             label = field if group is None else f"{group}.{field}"
             errors.append(f"manifest {label} differs from independently hashed canonical {field}")
+        if field == "behavioral_acceptance" and actual != APPROVED_BEHAVIORAL_FIXTURE_SHA256:
+            errors.append(
+                "canonical behavioral_acceptance differs from the independently approved behavioral fixture "
+                f"v{APPROVED_BEHAVIORAL_FIXTURE_VERSION}"
+            )
     if not _is_sha256(manifest.get("config_sha256")):
         errors.append("manifest.config_sha256 must be a lowercase SHA-256 hash")
     for field in ("host", "surface", "model", "reasoning", "profile", "evaluator_version", "rubric_version"):
@@ -475,9 +482,10 @@ def _compute_semantic_result(formula_id: str, inputs: Mapping[str, Any]) -> dict
             inputs["mode"] != "inline-only" and value > 0 and value >= int(inputs["margin"])
             and max(benefits) >= 2 and inputs["observable_done_condition"]
             and inputs["fits_job_envelope"] and inputs["platform_available"] and inputs["authority_allows"]
+            and int(inputs["available_specialist_slots"]) >= 1
         )
-        route = inputs["route_if_approved"] if approved else "inline"
-        return {"delegation_value": value, "route": route, "specialist_count": specialists}
+        route = "delegate" if approved else "inline"
+        return {"delegation_value": value, "route": route, "specialist_count": 1 if approved else 0}
     if formula_id == "utility.whole-job.v1":
         weights = {name: float(inputs[f"weight_{name}"]) for name in ("quality", "cost", "latency", "attention", "rework")}
         if weights != PROFILE_WEIGHTS.get(inputs["profile"]) or inputs["utility_tie_policy"] != "inline-unless-independence-mandatory":
@@ -552,13 +560,13 @@ def _compute_semantic_result(formula_id: str, inputs: Mapping[str, Any]) -> dict
         effective_host_max = min(32, int(inputs["detected_host_max"]))
         if exact is not None:
             fits = gates and exact <= effective_host_max and exact <= int(inputs["available_slots"]) and exact <= int(inputs["budget_capacity"])
-            return {"route": "exact-specialists" if fits else "resolution-question", "specialist_count": int(exact) if fits else 0}
+            return {"route": "delegate" if fits else "resolution-question", "specialist_count": int(exact) if fits else 0}
         benefits = [int(inputs[f"benefit_{name}"]) for name in ("parallel", "independence", "context", "quality")]
         costs = [int(inputs[f"cost_{name}"]) for name in ("setup", "transfer", "merge", "review_rework")]
         value = sum(benefits) - sum(costs)
         count = min(int(inputs["independent_workstreams"]), int(inputs["max_active_specialists"]), effective_host_max, int(inputs["available_slots"]), int(inputs["budget_capacity"]))
         approved = gates and value > 0 and value >= int(inputs["delegation_margin"]) and max(benefits) >= 2 and count > 0
-        return {"route": "team-requested" if approved else "inline", "specialist_count": count if approved else 0}
+        return {"route": "delegate" if approved else "inline", "specialist_count": count if approved else 0}
     return None
 
 
