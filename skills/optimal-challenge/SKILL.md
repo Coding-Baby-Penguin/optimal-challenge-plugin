@@ -6,14 +6,16 @@ description: Use when handling any request, including simple tasks, continued th
 # Optimal Challenge
 
 ## Purpose
-Route every request with minimum context and compute. System, developer, and explicit user instructions remain authoritative.
+Route with minimum context and compute; authoritative instructions remain binding.
 
 ## Fast routing
 1. Read the request and relevant context. Detect existing designs, approved plans, checkpoints, and unfinished state.
 2. Use direct only when the task is stable, single-step, and low-risk and has no explicit team, exact-specialist, independent-review, or other non-inline routing constraint.
 3. Otherwise choose structured, tool-assisted, multi-workstream, or high-assurance work.
-4. Reuse an applicable approved plan and its next unfinished step. Replan only when invalidated, decisions are missing, or requested.
+4. Reuse a valid approved plan. Replan only when invalidated, incomplete, or requested.
 5. Select the smallest matching specialist. Availability and universal-use claims are not selection evidence.
+
+Before costly research, delegation, replanning, or review, load [context management](references/context-management.md) and run its goal-drift checkpoint. Skip it for cheap, reversible direct work.
 
 Only after rejecting direct work, load [premise validation](references/premise-validation.md) for material assumptions. For production with material scale, paid-generation, rejection, or rework risk, load [research before scale](references/high-cost-research.md). Load [team orchestration](references/team-orchestration.md) and [cost-quality routing](references/cost-quality-routing.md) only for a real multi-workstream or explicit delegation decision. Load [team continuity](references/team-continuity.md) for reuse or fresh independence.
 

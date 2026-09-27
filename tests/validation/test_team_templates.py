@@ -175,6 +175,9 @@ class TeamTemplateContracts(unittest.TestCase):
             self.assertIn(identity, returned)
         for additive_alias in ["decision_delta", "concerns"]:
             self.assertIn(additive_alias, returned)
+        self.assertIn("next_action", returned)
+        self.assertIsInstance(returned["next_action"], str)
+        self.assertIn("next_action", task["return_contract"])
 
     def test_return_statuses_are_machine_readable_not_comment_only(self):
         returned = self.load_yaml("RETURN-CAPSULE.yaml")

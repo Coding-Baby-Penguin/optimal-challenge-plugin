@@ -21,6 +21,7 @@ decision_delta: []
 assumptions: []
 risks: []
 concerns: []
+next_action: ""
 needs:
   capabilities: []
   decisions: []
