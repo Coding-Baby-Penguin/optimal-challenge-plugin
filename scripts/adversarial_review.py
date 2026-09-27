@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 
 try:
     from .evaluate_routing import validate_manifest as validate_routing_manifest
     from .evaluate_research_gate import evaluate_case as evaluate_research_case
+    from .evaluate_research_gate import load_fixture_evidence_context
     from .evaluate_research_gate import validate_manifest as validate_research_manifest
 except ImportError:  # Direct CLI execution puts scripts/ on sys.path.
     from evaluate_routing import validate_manifest as validate_routing_manifest
     from evaluate_research_gate import evaluate_case as evaluate_research_case
+    from evaluate_research_gate import load_fixture_evidence_context
     from evaluate_research_gate import validate_manifest as validate_research_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_RESEARCH_POLICY_SHA256 = "ed1e80822dc1de2f200235aa63f21894d0c7e63510b43c4aa9a77567de2ab02b"
 
 
 def unconditional_costly_behavior_issues(policy_texts):
@@ -47,18 +51,16 @@ def research_gate_issues(policy_texts, evaluator=evaluate_research_case, root: P
     policy = policy_texts.get("high-cost-research.md", "")
     if not isinstance(policy, str):
         return ["Research gate policy is not text"]
-    if re.search(r"resolved\s+or\s+exposed", policy, re.IGNORECASE):
-        issues.append("Research gate permits material contradictions to be resolved or exposed")
-    for required in (
-        "unresolved material contradiction blocks acceptance-ready scaling",
-        "exactly one blocking question bundle",
-        "no larger than the smallest adequate pilot or draft",
-        "never produce the full costly batch",
-    ):
-        if required not in policy.lower():
-            issues.append(f"Research gate policy missing fail-closed rule: {required}")
+    actual_digest = hashlib.sha256(policy.encode("utf-8")).hexdigest()
+    if actual_digest != EXPECTED_RESEARCH_POLICY_SHA256:
+        issues.append("Research gate policy digest differs from the independently reviewed pin")
     try:
-        validate_research_manifest(root / "tests" / "research-gate.json", evaluator=evaluator)
+        context = load_fixture_evidence_context(root / "tests" / "fixtures" / "research" / "trusted-evidence.json")
+        validate_research_manifest(
+            root / "tests" / "research-gate.json",
+            evidence_context=context,
+            evaluator=evaluator,
+        )
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         issues.append(f"Research gate semantic disagreement: {exc}")
     return issues

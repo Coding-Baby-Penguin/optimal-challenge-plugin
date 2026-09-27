@@ -9,6 +9,7 @@ from pathlib import Path
 
 import capability_matrix
 import evaluate_behavior
+from evaluate_research_gate import load_fixture_evidence_context
 from evaluate_research_gate import validate_manifest as validate_research_manifest
 from evaluate_routing import validate_manifest as validate_routing_manifest
 from orchestration_config import load_effective_config, validate_config
@@ -78,8 +79,16 @@ def run_integrated_checks() -> None:
         errors.append(f"Team routing: {exc}")
 
     try:
-        count = validate_research_manifest(configured_path("researchGateScenarios", "tests/research-gate.json"))
-        integrated_evidence.append(f"Research-before-scale: PASSED ({count} cases)")
+        context = load_fixture_evidence_context(
+            configured_path("researchEvidenceFixture", "tests/fixtures/research/trusted-evidence.json")
+        )
+        count = validate_research_manifest(
+            configured_path("researchGateScenarios", "tests/research-gate.json"),
+            evidence_context=context,
+        )
+        integrated_evidence.append(
+            f"Research-before-scale: PASSED ({count} structural fixture cases; not host evidence)"
+        )
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"Research-before-scale: {exc}")
 

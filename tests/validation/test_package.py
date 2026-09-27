@@ -48,6 +48,7 @@ class PackageIndependentReview(unittest.TestCase):
             "allocationLedgerSchema": "config/allocation-ledger.schema.json",
             "routingScenarios": "tests/team-routing.json",
             "researchGateScenarios": "tests/research-gate.json",
+            "researchEvidenceFixture": "tests/fixtures/research/trusted-evidence.json",
             "behavioralScenarios": "tests/behavioral-acceptance.json",
             "evaluationManifest": "tests/evaluation-manifest.json",
             "routingEvaluator": "scripts/evaluate_routing.py",

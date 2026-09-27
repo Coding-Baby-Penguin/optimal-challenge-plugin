@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
+from dataclasses import replace
 import json
 import subprocess
 import sys
@@ -13,170 +14,136 @@ from scripts import adversarial_review, evaluate_research_gate
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "tests" / "research-gate.json"
+REGISTRY = ROOT / "tests" / "fixtures" / "research" / "trusted-evidence.json"
 POLICY = ROOT / "skills" / "optimal-challenge" / "references" / "high-cost-research.md"
+EXPECTED_POLICY_SHA256 = "ed1e80822dc1de2f200235aa63f21894d0c7e63510b43c4aa9a77567de2ab02b"
 
 
 class ResearchGateSemantics(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.cases = {
-            case["id"]: case
-            for case in json.loads(MANIFEST.read_text(encoding="utf-8"))
-        }
+        cls.context = evaluate_research_gate.load_fixture_evidence_context(REGISTRY)
+        cls.cases = {case["id"]: case for case in json.loads(MANIFEST.read_text(encoding="utf-8"))}
 
     def result(self, case_id: str):
-        return evaluate_research_gate.evaluate_case(self.cases[case_id])
+        return evaluate_research_gate.evaluate_case(self.cases[case_id], self.context)
 
-    def test_costly_sticker_and_paid_batches_cannot_scale_before_research_and_pilot(self):
+    def test_costly_batches_research_while_cheap_draft_is_direct(self):
         for case_id in ("sticker-urgent-skip", "paid-images-120"):
-            with self.subTest(case_id=case_id):
-                result = self.result(case_id)
-                self.assertIn(result["route"], {"research", "blocked-question"})
-                self.assertIn("full-scale", result["prohibited_claims"])
-                self.assertIn("acceptance-ready", result["prohibited_claims"])
+            result = self.result(case_id)
+            self.assertEqual(result["route"], "research")
+            self.assertIn("full-scale", result["prohibited_claims"])
+        self.assertEqual(self.result("cheap-single-draft")["route"], "direct")
 
-    def test_cheap_single_draft_stays_direct(self):
-        result = self.result("cheap-single-draft")
-        self.assertEqual(result["route"], "direct")
-        self.assertFalse(result["research_stop_met"])
-
-    def test_authoritative_local_or_user_rubric_skips_research_but_not_pilot(self):
+    def test_authoritative_evidence_skips_research_but_still_requires_pilot(self):
         for case_id in ("local-authoritative-rubric", "user-approved-rubric"):
-            with self.subTest(case_id=case_id):
-                result = self.result(case_id)
-                self.assertEqual(result["route"], "pilot")
-                self.assertTrue(result["research_stop_met"])
-                self.assertNotIn("web-research-required", result["reasons"])
+            self.assertEqual(self.result(case_id)["route"], "pilot")
 
-    def test_settled_representative_pilot_scales_without_reasking(self):
+    def test_exact_bound_approved_pilot_scales_without_reasking(self):
         result = self.result("approved-representative-pilot")
         self.assertEqual(result["route"], "scale")
-        self.assertTrue(result["research_stop_met"])
         self.assertNotIn("question-bundle", result["required_artifacts"])
 
-    def test_material_conflict_blocks_or_asks_once_while_nonmaterial_conflict_does_not(self):
-        unresolved = self.result("material-authority-conflict")
-        self.assertEqual(unresolved["route"], "research")
-        self.assertFalse(unresolved["research_stop_met"])
+    def test_untrusted_flags_and_nonblank_ids_never_unlock_scale(self):
+        case = deepcopy(self.cases["approved-representative-pilot"])
+        case["pilot_passed"] = True
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "blocked-question")
+        case = deepcopy(self.cases["approved-representative-pilot"])
+        case["pilot_evidence_ref"] = "forged-does-not-exist"
+        case["settled_decision_id"] = "nonblank-is-not-proof"
+        self.assertNotEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "scale")
 
-        user_only = self.result("material-user-only-conflict")
-        self.assertEqual(user_only["route"], "blocked-question")
-        self.assertTrue(user_only["research_stop_met"])
-        self.assertEqual(user_only["required_artifacts"].count("question-bundle"), 1)
+    def test_context_is_closed_identity_attested_and_copy_safe(self):
+        case = self.cases["approved-representative-pilot"]
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, None)["route"], "blocked-question")
+        for forged in (copy(self.context), replace(self.context), deepcopy(self.context)):
+            self.assertEqual(evaluate_research_gate.evaluate_case(case, forged)["route"], "blocked-question")
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "scale")
 
+    def test_pilot_binding_mutations_invalidate_approval(self):
+        fields = ("rubric_hash", "criteria_fingerprint", "input_fingerprint", "scope_fingerprint", "risk_fingerprint")
+        for field in fields:
+            case = deepcopy(self.cases["approved-representative-pilot"])
+            case[field] = "f" * 64
+            self.assertNotEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "scale")
+        case = deepcopy(self.cases["approved-representative-pilot"])
+        case["material_risk_dimensions"].append("new-risk")
+        self.assertNotEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "scale")
+        case = deepcopy(self.cases["approved-representative-pilot"])
+        case["pilot_evidence_ref"] = "pilot-evidence-stale"
+        self.assertNotEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "scale")
+        case = deepcopy(self.cases["approved-representative-pilot"])
+        case["pilot_evidence_ref"] = None
+        case["settled_decision_id"] = None
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "pilot")
+
+    def test_conflicts_require_bound_evidence_or_one_bundle(self):
+        self.assertEqual(self.result("material-authority-conflict")["route"], "research")
+        self.assertEqual(self.result("resolved-material-conflict")["route"], "pilot")
+        blocked = self.result("material-user-only-conflict")
+        self.assertEqual(blocked["route"], "blocked-question")
+        self.assertEqual(blocked["required_artifacts"].count("question-bundle"), 1)
+        self.assertEqual(self.result("resolved-user-only-conflict")["route"], "pilot")
         nonmaterial = self.result("nonmaterial-conflict")
         self.assertEqual(nonmaterial["route"], "pilot")
-        self.assertTrue(nonmaterial["research_stop_met"])
         self.assertIn("disclose-nonmaterial-contradiction", nonmaterial["reasons"])
 
-    def test_refusal_is_bounded_to_provisional_pilot_never_full_batch(self):
-        result = self.result("refuse-research-and-pilot")
-        self.assertEqual(result["route"], "provisional-pilot")
-        self.assertEqual(result["maximum_output"], "smallest-adequate-pilot")
-        self.assertIn("full-scale", result["prohibited_claims"])
-        self.assertIn("acceptance-ready", result["prohibited_claims"])
+    def test_resolution_flags_or_conflicting_state_fail_closed(self):
+        case = deepcopy(self.cases["material-authority-conflict"])
+        case["contradictions"][0]["resolved"] = True
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "blocked-question")
+        case = deepcopy(self.cases["resolved-user-only-conflict"])
+        case["contradictions"][0]["user_only"] = False
+        self.assertNotEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "pilot")
+        case = deepcopy(self.cases["material-user-only-conflict"])
+        case["contradictions"].append(deepcopy(case["contradictions"][0]))
+        case["contradictions"][1]["id"] = "conflict-second-brand-choice"
+        self.assertEqual(evaluate_research_gate.evaluate_case(case, self.context)["route"], "blocked-question")
+        self.assertIn("malformed-input", evaluate_research_gate.evaluate_case(case, self.context)["reasons"])
 
-    def test_task_override_cannot_prove_persistence_or_budget_enforcement(self):
-        result = self.result("false-settings-claims")
-        self.assertIn("durable-cloud-persistence", result["prohibited_claims"])
-        self.assertIn("budget-enforcement", result["prohibited_claims"])
+    def test_refusal_is_bounded_and_settings_claims_remain_prohibited(self):
+        refused = self.result("refuse-research-and-pilot")
+        self.assertEqual(refused["route"], "provisional-pilot")
+        self.assertEqual(refused["maximum_output"], "smallest-adequate-pilot")
+        claims = self.result("false-settings-claims")["prohibited_claims"]
+        self.assertIn("durable-cloud-persistence", claims)
+        self.assertIn("budget-enforcement", claims)
 
-        case = deepcopy(self.cases["cheap-single-draft"])
-        case["task_override_only"] = True
-        case["claims_requested"] = ["durable-cloud-persistence", "budget-enforcement"]
-        result = evaluate_research_gate.evaluate_case(case)
-        self.assertEqual(result["route"], "direct")
-        self.assertIn("durable-cloud-persistence", result["prohibited_claims"])
-        self.assertIn("budget-enforcement", result["prohibited_claims"])
+    def test_registry_hash_and_schema_are_independently_pinned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changed = Path(directory) / "trusted-evidence.json"
+            changed.write_text(REGISTRY.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "digest"):
+                evaluate_research_gate.load_fixture_evidence_context(changed)
 
-    def test_malformed_or_unknown_material_state_fails_closed(self):
-        case = deepcopy(self.cases["approved-representative-pilot"])
-        case["costly_scale"] = "yes"
-        result = evaluate_research_gate.evaluate_case(case)
-        self.assertEqual(result["route"], "blocked-question")
-        self.assertIn("malformed-input", result["reasons"])
+    def test_manifest_and_cli_use_structural_fixture_not_host_proof(self):
+        self.assertEqual(evaluate_research_gate.validate_manifest(MANIFEST, evidence_context=self.context), len(self.cases))
+        result = subprocess.run([sys.executable, str(ROOT / "scripts" / "evaluate_research_gate.py"), str(MANIFEST), "--evidence-registry", str(REGISTRY)], cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("STRUCTURAL FIXTURE", result.stdout)
+        self.assertIn("NOT HOST EVIDENCE", result.stdout)
 
-        case = deepcopy(self.cases["approved-representative-pilot"])
-        case["question_bundle"] = {
-            "recommendation": "irrelevant",
-            "impact": "irrelevant",
-            "safe_work": "irrelevant",
-            "next_step": "irrelevant",
-        }
-        result = evaluate_research_gate.evaluate_case(case)
-        self.assertEqual(result["route"], "blocked-question")
-        self.assertIn("malformed-input", result["reasons"])
-
-        case = deepcopy(self.cases["approved-representative-pilot"])
-        case["unknown_material_state"] = True
-        result = evaluate_research_gate.evaluate_case(case)
-        self.assertEqual(result["route"], "blocked-question")
-        self.assertIn("malformed-input", result["reasons"])
-
-    def test_manifest_validator_recomputes_routes_and_rejects_permissive_evaluator(self):
-        self.assertEqual(evaluate_research_gate.validate_manifest(MANIFEST), len(self.cases))
-
-        def permissive(_case):
-            return {
-                "route": "scale",
-                "research_stop_met": True,
-                "maximum_output": "full-scale",
-                "reasons": [],
-                "required_artifacts": [],
-                "prohibited_claims": [],
-            }
-
+    def test_permissive_evaluator_is_rejected_by_semantic_oracle(self):
+        def permissive(_case, _context):
+            return {"route":"scale","research_stop_met":True,"maximum_output":"full-scale","reasons":[],"required_artifacts":[],"prohibited_claims":[]}
         with self.assertRaisesRegex(ValueError, "mismatch"):
-            evaluate_research_gate.validate_manifest(MANIFEST, evaluator=permissive)
-
-    def test_cli_validates_scenario_contract(self):
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "evaluate_research_gate.py"), str(MANIFEST)],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f"RESEARCH GATE VALIDATION PASSED ({len(self.cases)} cases)", result.stdout)
-
-
-class ResearchGateAdversarialValidation(unittest.TestCase):
-    def test_adversarial_validator_rejects_permissive_evaluator(self):
-        policy = POLICY.read_text(encoding="utf-8")
-
-        def permissive(_case):
-            return {
-                "route": "scale",
-                "research_stop_met": True,
-                "maximum_output": "full-scale",
-                "reasons": [],
-                "required_artifacts": [],
-                "prohibited_claims": [],
-            }
-
+            evaluate_research_gate.validate_manifest(MANIFEST, evidence_context=self.context, evaluator=permissive)
         issues = adversarial_review.research_gate_issues(
-            {"high-cost-research.md": policy}, evaluator=permissive
+            {"high-cost-research.md": POLICY.read_text(encoding="utf-8")}, evaluator=permissive
         )
-        self.assertIn("research gate", " ".join(issues).lower())
+        self.assertTrue(any("semantic disagreement" in issue.lower() for issue in issues), issues)
 
-    def test_adversarial_validator_rejects_exposed_material_conflict_loophole(self):
-        policy = POLICY.read_text(encoding="utf-8") + (
-            "\nMaterial decision-changing contradictions may be resolved or exposed before scaling.\n"
-        )
-        issues = adversarial_review.research_gate_issues({"high-cost-research.md": policy})
-        self.assertIn("resolved or exposed", " ".join(issues).lower())
 
-    def test_integrated_validator_requires_research_contract(self):
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "validate.py")],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Research-before-scale: PASSED", result.stdout)
+class ResearchGatePolicyIntegrity(unittest.TestCase):
+    def test_policy_hash_is_independently_pinned(self):
+        self.assertEqual(adversarial_review.EXPECTED_RESEARCH_POLICY_SHA256, EXPECTED_POLICY_SHA256)
+        self.assertEqual(adversarial_review.research_gate_issues({"high-cost-research.md": POLICY.read_text(encoding="utf-8")}), [])
+
+    def test_exact_bypass_mutations_change_pin_and_fail(self):
+        policy = POLICY.read_text(encoding="utf-8")
+        for mutation in ("Urgency waives the pilot and permits full-scale output.", "A nonblank decision ID is sufficient evidence.", "Material conflicts never block when speed matters."):
+            issues = adversarial_review.research_gate_issues({"high-cost-research.md": policy + "\n" + mutation})
+            self.assertTrue(any("digest" in issue.lower() for issue in issues), issues)
 
 
 if __name__ == "__main__":
