@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import stat
@@ -129,9 +130,7 @@ def iter_package_files(root: Path, excludes: Sequence[str]) -> list[Path]:
     return sorted(selected, key=lambda path: _relative_posix(root, path))
 
 
-def build_archive(root: Path, output: Path, files: Sequence[Path]) -> str:
-    """Write a deterministic ZIP archive and return its SHA-256 digest."""
-
+def _ordered_package_files(root: Path, files: Sequence[Path]) -> list[tuple[str, Path]]:
     root = root.resolve()
     ordered: list[tuple[str, Path]] = []
     seen: set[str] = set()
@@ -147,29 +146,45 @@ def build_archive(root: Path, output: Path, files: Sequence[Path]) -> str:
         seen.add(relative)
         ordered.append((relative, path))
     ordered.sort(key=lambda item: item[0])
+    return ordered
+
+
+def _canonical_archive_bytes(root: Path, files: Sequence[Path]) -> bytes:
+    """Return the one canonical byte representation for selected sources."""
+
+    ordered = _ordered_package_files(root, files)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(
+        buffer,
+        mode="w",
+        compression=zipfile.ZIP_STORED,
+        allowZip64=False,
+        strict_timestamps=True,
+    ) as archive:
+        for relative, path in ordered:
+            info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
+            info.create_system = CANONICAL_CREATE_SYSTEM
+            info.create_version = CANONICAL_ZIP_VERSION
+            info.extract_version = CANONICAL_ZIP_VERSION
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = FIXED_FILE_MODE << 16
+            info.internal_attr = 0
+            info.flag_bits = CANONICAL_FLAG_BITS
+            info.extra = b""
+            info.comment = b""
+            archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_STORED)
+    return buffer.getvalue()
+
+
+def build_archive(root: Path, output: Path, files: Sequence[Path]) -> str:
+    """Write a deterministic ZIP archive and return its SHA-256 digest."""
+
+    canonical = _canonical_archive_bytes(root, files)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
     try:
-        with zipfile.ZipFile(
-            temporary,
-            mode="w",
-            compression=zipfile.ZIP_STORED,
-            allowZip64=False,
-            strict_timestamps=True,
-        ) as archive:
-            for relative, path in ordered:
-                info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
-                info.create_system = CANONICAL_CREATE_SYSTEM
-                info.create_version = CANONICAL_ZIP_VERSION
-                info.extract_version = CANONICAL_ZIP_VERSION
-                info.compress_type = zipfile.ZIP_STORED
-                info.external_attr = FIXED_FILE_MODE << 16
-                info.internal_attr = 0
-                info.flag_bits = CANONICAL_FLAG_BITS
-                info.extra = b""
-                info.comment = b""
-                archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_STORED)
+        temporary.write_bytes(canonical)
         os.replace(temporary, output)
     finally:
         if temporary.exists():
@@ -184,6 +199,7 @@ def compare_archive(root: Path, archive: Path, files: Sequence[Path]) -> list[st
     root = root.resolve()
     expected = {_relative_posix(root, Path(path)): Path(path) for path in files}
     expected_names = sorted(expected)
+    canonical = _canonical_archive_bytes(root, files)
     errors: list[str] = []
     try:
         with zipfile.ZipFile(archive) as package:
@@ -230,12 +246,16 @@ def compare_archive(root: Path, archive: Path, files: Sequence[Path]) -> list[st
                     errors.append(f"archive creator system is not canonical for {name}: {info.create_system}")
                 if info.create_version != CANONICAL_ZIP_VERSION or info.extract_version != CANONICAL_ZIP_VERSION:
                     errors.append(f"archive ZIP version is not canonical for {name}")
+                if info.internal_attr != 0:
+                    errors.append(f"archive internal attributes are not canonical for {name}: {info.internal_attr}")
                 if info.extra or info.comment:
                     errors.append(f"archive extra/comment metadata is not canonical for {name}")
                 if name in expected and package.read(info) != expected[name].read_bytes():
                     errors.append(f"changed archive member: {name}")
             if package.comment:
                 errors.append("archive comment is not canonical")
+        if archive.read_bytes() != canonical:
+            errors.append("archive bytes/framing do not match the canonical artifact")
     except (OSError, zipfile.BadZipFile) as exc:
         errors.append(f"cannot read archive: {exc}")
     return errors

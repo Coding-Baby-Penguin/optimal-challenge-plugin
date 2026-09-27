@@ -296,6 +296,39 @@ class ReleasePackageTests(unittest.TestCase):
             any("duplicate" in error.lower() for error in compare_archive(self.root, archive_path, files))
         )
 
+    def test_compare_archive_rejects_internal_attributes_and_noncanonical_framing(self):
+        files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
+        archive_path = self.root / "dist" / "framing.zip"
+        ordered = sorted(files, key=lambda item: item.relative_to(self.root).as_posix())
+
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+            for path in ordered:
+                info = zipfile.ZipInfo(
+                    path.relative_to(self.root).as_posix(),
+                    (1980, 1, 1, 0, 0, 0),
+                )
+                info.create_system = 3
+                info.create_version = 20
+                info.extract_version = 20
+                info.external_attr = (stat.S_IFREG | 0o644) << 16
+                info.internal_attr = 1
+                archive.writestr(info, path.read_bytes())
+        self.assertTrue(
+            any("internal" in error.lower() for error in compare_archive(self.root, archive_path, files))
+        )
+
+        build_archive(self.root, archive_path, files)
+        canonical = archive_path.read_bytes()
+        archive_path.write_bytes(canonical + b"junk")
+        self.assertTrue(
+            any("framing" in error.lower() or "bytes" in error.lower() for error in compare_archive(self.root, archive_path, files))
+        )
+
+        archive_path.write_bytes(b"junk" + canonical)
+        self.assertTrue(
+            any("framing" in error.lower() or "bytes" in error.lower() for error in compare_archive(self.root, archive_path, files))
+        )
+
     def test_project_configuration_declares_release_command_and_required_exclusions(self):
         project = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))
         self.assertEqual(project["commands"]["package"], "python scripts/package_release.py")
