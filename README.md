@@ -170,6 +170,32 @@ claude --plugin-dir ./optimal-challenge-plugin-<version>.zip
 
 The skill appears under the plugin namespace. Implicit model invocation remains enabled so it can assess every request and route only meaningful complexity.
 
+## Upgrade and compatibility
+
+To upgrade an existing Codex installation from the local checkout, update the checkout, then reinstall from the already configured marketplace:
+
+```powershell
+git pull
+codex plugin add optimal-challenge@optimal-challenge-local
+```
+
+Do not re-add an already configured marketplace just to update this plugin. Start a new Codex task after reinstalling so the new skill and metadata load. During local development without a version change, use the plugin-creator cachebuster helper before the same `codex plugin add` command; replace one cachebuster rather than stacking suffixes.
+
+For Claude Code, update the installed marketplace plugin and restart Claude Code:
+
+```bash
+claude plugin update optimal-challenge@optimal-challenge-marketplace
+```
+
+The 1.1-to-1.2 compatibility contract is intentionally additive:
+
+- Balanced remains the default when no profile is supplied.
+- Existing consumers receive additive task-capsule.yaml fields with documented empty or conservative defaults; validation identifies custom consumers that reject the additions.
+- The platform-codex.md and platform-claude.md filenames remain stable.
+- `.optimal-challenge/` remains ignored and reconstructable; it is disposable runtime state, not project truth.
+- `docs/PROJECT-STATE.md` remains the only canonical project state; upgrading creates no second checkpoint or roadmap.
+- Fresh-host behavioral acceptance remains `UNVERIFIED` until isolated Task 10 runs pass. The version bump and repository tests do not establish observed host support or provider budget enforcement.
+
 ## Validate
 
 ```bash

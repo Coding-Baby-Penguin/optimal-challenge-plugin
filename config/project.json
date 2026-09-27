@@ -30,6 +30,6 @@
   },
   "commands": {
     "validate": "python scripts/validate.py",
-    "test": "python -m unittest -v tests.validation.test_package"
+    "test": "python -m unittest discover -v"
   }
 }

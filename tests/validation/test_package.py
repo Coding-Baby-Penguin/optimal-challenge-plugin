@@ -103,6 +103,77 @@ class PackageIndependentReview(unittest.TestCase):
         ]:
             self.assertIn(evidence, result.stdout)
 
+    def test_canonical_test_command_cannot_narrow_repository_discovery(self):
+        project = json.loads(PROJECT_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(project["commands"]["test"], "python -m unittest discover -v")
+
+    def test_integrated_capability_gate_validates_rows_and_fail_closed_resolution(self):
+        from scripts import capability_matrix
+
+        validator = getattr(capability_matrix, "validate_capability_contracts", None)
+        self.assertTrue(callable(validator), "capability contract validator is missing")
+        documents = {
+            name: (SKILL_DIR / "references" / name).read_text(encoding="utf-8")
+            for name in ("platform-codex.md", "platform-claude.md")
+        }
+        self.assertEqual(validator(ROOT, documents=documents), [])
+
+        mutated = dict(documents)
+        mutated["platform-codex.md"] = mutated["platform-codex.md"].replace(
+            "| codex-local | Native resume | policy-only | policy:host-resume-probe | policy:codex-local/native-resume | unavailable | 2026-09-27T00:00:00Z | 2026-10-27T00:00:00Z | n/a | rehydrate |",
+            "| codex-local | Native resume | policy-only | policy:host-resume-probe | policy:codex-local/native-resume | unavailable | 2026-09-27T00:00:00Z | 2026-10-27T00:00:00Z | n/a | inline |",
+            1,
+        )
+        self.assertIn("fallback", " ".join(validator(ROOT, documents=mutated)).lower())
+
+        def permissive_resolver(surface, live, acceptance, policy, now):
+            return {
+                "surface_id": surface,
+                "capability": policy["capability"],
+                "support_level": "policy-only",
+                "required_fallback": policy["required_fallback"],
+                "evidence_source": "policy_declaration",
+            }
+
+        resolver_errors = validator(ROOT, documents=documents, resolver=permissive_resolver)
+        self.assertIn("fail closed", " ".join(resolver_errors).lower())
+
+    def test_adversarial_team_scan_covers_router_and_all_lazy_policy_modules(self):
+        from scripts import adversarial_review
+
+        detector = getattr(adversarial_review, "unconditional_costly_behavior_issues", None)
+        self.assertTrue(callable(detector), "whole-policy costly-behavior detector is missing")
+        policies = {"SKILL.md": (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")}
+        policies.update({
+            path.name: path.read_text(encoding="utf-8")
+            for path in (SKILL_DIR / "references").glob("*.md")
+        })
+        self.assertEqual(detector(policies), [])
+
+        spawn_mutation = dict(policies)
+        spawn_mutation["team-orchestration.md"] += "\nAlways spawn a specialist team.\n"
+        self.assertIn("team-orchestration.md", " ".join(detector(spawn_mutation)))
+
+        review_mutation = dict(policies)
+        review_mutation["verification.md"] += "\nReview every task independently.\n"
+        self.assertIn("verification.md", " ".join(detector(review_mutation)))
+
+    def test_readme_documents_120_upgrade_and_compatibility_contract(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+        semantic_text = text.replace("`", "")
+        self.assertIn("## upgrade and compatibility", text)
+        for phrase in [
+            "codex plugin add optimal-challenge@optimal-challenge-local",
+            "claude plugin update optimal-challenge@optimal-challenge-marketplace",
+            "balanced remains the default",
+            "additive task-capsule.yaml fields",
+            "platform-codex.md and platform-claude.md filenames remain stable",
+            ".optimal-challenge/ remains ignored and reconstructable",
+            "docs/project-state.md remains the only canonical project state",
+            "fresh-host behavioral acceptance remains `unverified`",
+        ]:
+            self.assertIn(phrase.replace("`", ""), semantic_text)
+
     def test_skill_is_small_and_trigger_focused(self):
         text = (SKILL_DIR / "SKILL.md").read_text()
         body = text.split("---", 2)[-1]

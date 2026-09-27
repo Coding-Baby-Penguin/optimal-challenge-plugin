@@ -5,6 +5,7 @@ import json
 import weakref
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, TypeAlias
 
 
@@ -148,6 +149,21 @@ _ISSUED_EVIDENCE: dict[
     int,
     tuple[weakref.ReferenceType[TrustedCapabilityEvidence], str],
 ] = {}
+
+DISPLAY_CAPABILITIES = {
+    "native resume": "native_resume",
+    "pause/cancel": "pause_cancel",
+    "usage measurement": "usage_measurement",
+    "local enforcement": "local_enforcement",
+    "provider enforcement": "provider_enforcement",
+    "persistence/privacy": "persistence_privacy",
+    "parallel execution": "parallel_execution",
+    "tracing": "tracing",
+}
+CAPABILITY_DOCUMENT_SURFACES = {
+    "platform-codex.md": frozenset({"codex-local", "openai-api-agents"}),
+    "platform-claude.md": frozenset({"claude-code-local", "anthropic-api-agent-sdk"}),
+}
 
 
 def _is_text(value: Any) -> bool:
@@ -750,3 +766,127 @@ def resolve_capability(
         return _resolved(surface, acceptance, policy, "acceptance_run")
 
     return _policy_result(surface, policy, checked_at)
+
+
+def validate_capability_contracts(
+    root: Path,
+    *,
+    documents: Mapping[str, str] | None = None,
+    resolver: Any = None,
+) -> list[str]:
+    """Validate every platform row and prove generic live claims fail closed.
+
+    This validates static policy declarations only.  It deliberately supplies no
+    trusted runtime evidence and therefore cannot establish observed host support.
+    """
+
+    errors: list[str] = []
+    selected_resolver = resolve_capability if resolver is None else resolver
+    if not callable(selected_resolver):
+        return ["capability resolver must be callable"]
+    if documents is None:
+        reference_dir = root / "skills" / "optimal-challenge" / "references"
+        try:
+            documents = {
+                name: (reference_dir / name).read_text(encoding="utf-8")
+                for name in CAPABILITY_DOCUMENT_SURFACES
+            }
+        except (OSError, UnicodeError) as exc:
+            return [f"capability documents cannot be read: {exc}"]
+
+    expected_pairs = {
+        (surface, capability)
+        for surfaces in CAPABILITY_DOCUMENT_SURFACES.values()
+        for surface in surfaces
+        for capability in CAPABILITY_FALLBACKS
+    }
+    seen_pairs: set[tuple[str, str]] = set()
+    for document_name, expected_surfaces in CAPABILITY_DOCUMENT_SURFACES.items():
+        text = documents.get(document_name)
+        if not isinstance(text, str):
+            errors.append(f"{document_name}: capability document is missing")
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) != 11 or cells[0].lower() in {"surface id", "---"} or set(cells[0]) == {"-"}:
+                continue
+            label = f"{document_name}:{line_number}"
+            surface, display_capability, support, detector, evidence_ref, version, verified_at, expires_at, measurement, fallback, _ = cells
+            capability = DISPLAY_CAPABILITIES.get(display_capability.lower())
+            if surface not in expected_surfaces:
+                errors.append(f"{label}: unexpected surface {surface!r}")
+                continue
+            if capability is None:
+                errors.append(f"{label}: unknown capability {display_capability!r}")
+                continue
+            pair = (surface, capability)
+            if pair in seen_pairs:
+                errors.append(f"{label}: duplicate surface/capability row {surface}/{capability}")
+                continue
+            seen_pairs.add(pair)
+            policy = {
+                "surface_id": surface,
+                "capability": capability,
+                "support_level": support,
+                "detector": detector,
+                "evidence_ref": evidence_ref,
+                "verified_version": version,
+                "verified_at": verified_at,
+                "expires_at": expires_at,
+                "provenance": "policy_declaration",
+                "required_fallback": fallback,
+                "measurement_surface": None if measurement.lower() == "n/a" else measurement,
+            }
+            policy_errors = _policy_errors(surface, policy)
+            if not detector.startswith("policy:"):
+                policy_errors.append("policy detector must use the policy namespace")
+            if evidence_ref != f"policy:{surface}/{capability.replace('_', '-')}":
+                policy_errors.append("policy evidence_ref must bind the exact surface/capability")
+            if policy_errors:
+                errors.extend(f"{label}: {error}" for error in policy_errors)
+                continue
+            verified = _timestamp(verified_at)
+            expires = _timestamp(expires_at)
+            if verified is None or expires is None:
+                continue
+            checked_at = verified + (expires - verified) / 2
+            try:
+                static_result = selected_resolver(surface, None, None, policy, checked_at)
+                forged_result = selected_resolver(
+                    surface,
+                    {"support_level": "observed", "evidence_ref": "user:forged"},
+                    None,
+                    policy,
+                    checked_at,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                errors.append(f"{label}: resolver rejected valid policy row: {exc}")
+                continue
+            if not isinstance(static_result, Mapping):
+                errors.append(f"{label}: resolver returned a non-object policy result")
+            else:
+                if static_result.get("surface") != surface or static_result.get("capability") != capability:
+                    errors.append(f"{label}: static policy result changed the surface/capability identity")
+                if static_result.get("support_level") != support:
+                    errors.append(f"{label}: policy-only/unsupported support level was not preserved")
+                if static_result.get("evidence_source") != "policy_declaration":
+                    errors.append(f"{label}: static policy result has false runtime provenance")
+                if static_result.get("required_fallback") != fallback:
+                    errors.append(f"{label}: static policy result changed the fallback")
+            if not isinstance(forged_result, Mapping) or forged_result.get("support_level") != "unknown":
+                errors.append(f"{label}: resolver must fail closed for generic live evidence")
+            else:
+                if forged_result.get("surface") != surface or forged_result.get("capability") != capability:
+                    errors.append(f"{label}: fail-closed result changed the surface/capability identity")
+                if forged_result.get("required_fallback") != fallback:
+                    errors.append(f"{label}: fail-closed result changed the fallback")
+
+    missing = expected_pairs - seen_pairs
+    extra = seen_pairs - expected_pairs
+    if missing:
+        errors.append(f"capability matrix rows missing: {sorted(missing)}")
+    if extra:
+        errors.append(f"unexpected capability matrix rows: {sorted(extra)}")
+    return errors

@@ -94,18 +94,10 @@ def run_integrated_checks() -> None:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"Orchestration state: {exc}")
 
-    expected_surfaces = {
-        "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
-    }
-    expected_capabilities = {
-        "native_resume", "pause_cancel", "usage_measurement", "local_enforcement",
-        "provider_enforcement", "persistence_privacy", "parallel_execution", "tracing",
-    }
-    if set(capability_matrix.TRUSTED_LIVE_ADAPTERS) != expected_surfaces:
-        errors.append("Capability contracts: trusted adapter surfaces are incomplete")
-    if set(capability_matrix.CAPABILITY_FALLBACKS) != expected_capabilities:
-        errors.append("Capability contracts: fallback coverage is incomplete")
-    if not any(error.startswith("Capability contracts:") for error in errors):
+    capability_errors = capability_matrix.validate_capability_contracts(ROOT)
+    if capability_errors:
+        errors.extend(f"Capability contracts: {error}" for error in capability_errors)
+    else:
         integrated_evidence.append("Capability contracts: PASSED")
 
     try:
