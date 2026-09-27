@@ -28,8 +28,35 @@
     "orchestrationValidator": "scripts/validate_orchestration.py",
     "capabilityValidator": "scripts/capability_matrix.py"
   },
+  "packaging": {
+    "excludes": [
+      ".git/**",
+      ".optimal-challenge/**",
+      ".superpowers/**",
+      ".codex/**",
+      ".claude/**",
+      "dist/**",
+      "build/**",
+      "tmp/**",
+      "temp/**",
+      "docs/superpowers/**",
+      "tests/raw/**",
+      "tests/results/**",
+      "**/__pycache__/**",
+      "**/*.py[cod]",
+      ".pytest_cache/**",
+      ".mypy_cache/**",
+      ".ruff_cache/**",
+      ".coverage",
+      "htmlcov/**",
+      "coverage/**",
+      "*.log",
+      "logs/**"
+    ]
+  },
   "commands": {
     "validate": "python scripts/validate.py",
-    "test": "python -m unittest discover -v"
+    "test": "python -m unittest discover -v",
+    "package": "python scripts/package_release.py"
   }
 }

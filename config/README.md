@@ -4,6 +4,29 @@ This folder is the canonical home for project-owned, shareable configuration. `p
 
 Tool-required manifests remain at the repository root or their mandated discovery paths. Validation checks them against `project.json` to catch drift.
 
+## Deterministic release packaging
+
+Run `python scripts/package_release.py` to build the archive named by
+`paths.package`. The packager selects files using `packaging.excludes`, writes
+members in sorted POSIX-path order with a fixed 1980-01-01 timestamp and
+regular-file `0644` permissions, then reopens the ZIP and compares every
+selected byte with source. It rejects symlinks, missing members, unexpected
+members, duplicate members, unsafe paths, and changed bytes. A successful run
+prints the file count and SHA-256; `dist/` remains ignored and is never staged.
+
+The exclusion list removes Git and agent-local state, generated archives,
+caches, planning documents, and local/raw evaluation results. Portable,
+Codex, and Claude manifests; runtime skills and templates; committed schemas
+and defaults; public documentation/legal/support files; validators; sanitized
+evaluation fixtures; and distributable validation tests remain in the archive.
+Fresh-host acceptance remains `UNVERIFIED` until Task 10 records isolated runs;
+an archive hash proves artifact identity, not host-model behavior.
+The shipped evaluation manifest cannot embed its own SHA-256 without changing
+the archive it identifies. Task 9 therefore reports the deterministic hash as
+external build evidence and keeps candidate arms explicitly provisional. Task
+10 pins and verifies the installed subject during isolated host runs; packaging
+must not rewrite provisional identity into a false verified claim.
+
 ## Precedence
 
 Orchestration policy has one access path: call
