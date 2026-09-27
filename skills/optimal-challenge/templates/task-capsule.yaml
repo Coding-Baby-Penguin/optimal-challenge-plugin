@@ -1,6 +1,14 @@
 # Use empty or safe default values until the coordinator supplies verified data.
 # Never include secrets, complete transcripts, or unverified worker beliefs as facts.
 goal_id: ""
+goal_anchor:
+  root_outcome: ""
+  success_criteria: []
+  non_goals: []
+  current_phase: ""
+  contribution_to_goal: ""
+  stop_condition: ""
+  minimum_evidence: []
 assignment_id: ""
 logical_teammate_id: ""
 task:

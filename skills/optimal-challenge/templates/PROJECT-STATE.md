@@ -1,7 +1,11 @@
 # Project state
 
-- **Goal:**
+- **North Star / root goal:**
 - **Success criteria:**
+- **Non-goals:**
+- **Current phase:**
+- **Goal contribution:**
+- **Working set:** Keep only HOT/WARM facts and pointers that can change the goal, a material constraint/decision, next action, success verification, or failure recovery.
 - **Last updated:**
 - **Current verified state:**
 - **Completed:**
@@ -35,3 +39,5 @@ Repeat this compact record for each unfinished assignment:
 - **Exact resume action:**
 
 Rewrite this canonical file at meaningful milestones. Do not copy the runtime registry or allocation ledger, create parallel checkpoint, roadmap, or state files, or record secrets, complete transcripts, or unverified beliefs as facts.
+
+The root goal changes only after an explicit user decision. Phase and assignment outcomes contribute to it but do not redefine it. Prefer pointers over copied history.

@@ -8,7 +8,9 @@ Choose per assignment:
 - **Rehydrate** the same logical teammate into a clean context from `templates/TEAMMATE-CAPSULE.yaml` when role continuity matters but history is noisy, oversized, unavailable, or unnecessary.
 - **Fresh** identity and context when independence is required, responsibilities conflict, capability changes materially, prior work failed without new evidence, or old conclusions could bias review.
 
-Pass only the minimum goal, constraints, relevant decision IDs, source and test evidence, capability lease, allocation, and return contract. Never pass secrets, complete transcripts, or unverified beliefs as facts.
+Pass only the root goal, bounded local outcome, contribution to the root goal, relevant constraints and decision IDs, source and test evidence pointers, stop condition, capability lease, allocation, and return contract. The root goal changes only after an explicit user decision; a teammate's local outcome can contribute to it but cannot redefine it. Never pass secrets, complete transcripts, or unverified beliefs as facts.
+
+Require the return capsule to contain only the goal-relevant delta: changed artifacts, verification, decisions, unresolved risks, and needs. Do not merge narrative history or unrelated discoveries into the next worker's context.
 
 The registry under `.optimal-challenge/` is disposable runtime state. Source files, repository state, tests, explicit decisions, and `docs/PROJECT-STATE.md` outrank it. Promote durable facts and decisions, not runtime histories. A stale, corrupt, torn, or conflicting registry is quarantined and reconstructed from authoritative task/return capsules and evidence; never merge conflicting logical IDs.
 

@@ -10,7 +10,7 @@ A lightweight always-on routing skill/plugin. It handles simple requests directl
 
 - **Goal first:** infer success criteria and ask only when ambiguity materially changes the outcome.
 - **Lazy loading:** `SKILL.md` is a small router; detailed modules live in `references/` and load only when triggered.
-- **Context discipline:** use minimum sufficient working sets and durable state instead of long-chat replay.
+- **Context discipline:** preserve the root goal, prune context that cannot change a decision or verification, and use durable pointers instead of long-chat replay.
 - **Parent-controlled delegation:** workers receive capability leases and do not re-run parent planning by default.
 - **Reality checks for codebases:** do not equate context/retrieval/tests with complete system understanding.
 - **Proportional evidence:** verification depth follows risk and oracle strength.
@@ -67,7 +67,7 @@ The committed default is advisory. An advisory ceiling stops the next discretion
 
 ## Continuity and selective review
 
-Each specialist has a logical identity separate from a provider session. The coordinator chooses among native resume, rehydrating the same logical role from a compact capsule, or a fresh independent worker. Source, tests, explicit decisions, and [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) outrank registry or conversation memory. Disposable registry/ledger state stays under ignored `.optimal-challenge/`; raw transcripts, secrets, and sensitive traits do not enter committed capsules.
+Each specialist has a logical identity separate from a provider session. The coordinator chooses among native resume, rehydrating the same logical role from a compact capsule, or a fresh independent worker. Every handoff preserves the user-controlled root goal, states the local contribution and stop condition, and returns only the goal-relevant delta. Source, tests, explicit decisions, and [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) outrank registry or conversation memory. Disposable registry/ledger state stays under ignored `.optimal-challenge/`; raw transcripts, secrets, and sensitive traits do not enter committed capsules.
 
 Review is selective: `ReviewValue = P(defect) × Impact × P(review detects defect) − ReviewCost`. Strong deterministic oracles handle reversible mechanical work; a fresh reviewer handles material judgment when value clears the profile margin. Consequential weak-oracle work can require independent review. If that reviewer is unavailable, the plugin reports `Blocked`, or `Degraded` only after an accepted named compensating oracle—never silent self-approval.
 

@@ -6,7 +6,9 @@ Load this module for multi-pass work, a likely quota or session boundary, multip
 
 Create or refresh the canonical project-state file at a meaningful milestone, before a known quota/session boundary, before a phase or agent handoff, and whenever completed work may otherwise be lost. Use `templates/PROJECT-STATE.md`; in a local repository, default to the tracked `docs/PROJECT-STATE.md` unless project instructions name another durable location.
 
-This single file combines current state and the development path using Now / Next / Later. It is a compact restart contract, not a transcript. Record completed and verified work, changed artifacts, unresolved risks, pending decisions, and one exact next action. Never record secrets or create parallel checkpoint, roadmap, or state files. On resume, read it plus authoritative source files, confirm that the recorded state still matches reality, then continue without replaying completed work or recreating a valid plan.
+This single file combines the root goal, current state, and development path using Now / Next / Later. The root goal changes only after an explicit user decision. A phase, reviewer, or local assignment may contribute to it but cannot redefine it. It is a compact restart contract, not a transcript. Record completed and verified work, changed artifacts, unresolved risks, pending decisions, the active working set, and one exact next action. Never record secrets or create parallel checkpoint, roadmap, or state files. On resume, read it plus authoritative source files, confirm that the recorded state still matches reality, then continue without replaying completed work or recreating a valid plan.
+
+For a handoff, pass the root goal, the bounded local outcome and its contribution, relevant constraints/evidence pointers, stop condition, and return contract. The return contains only the goal-relevant delta: changed artifacts, decisions, verification, unresolved risks, and the next action. Do not return a transcript or unrelated discoveries.
 
 ## Question bundle
 
