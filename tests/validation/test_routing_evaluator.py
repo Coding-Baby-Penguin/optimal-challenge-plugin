@@ -195,6 +195,15 @@ class DelegationCalculationTests(unittest.TestCase):
         self.assertEqual(score_delegation(delegation_case(), inline)["route"], "inline")
         self.assertEqual(score_delegation(delegation_case(), exact_zero)["route"], "inline")
 
+    def test_normal_delegation_honors_zero_configured_specialist_capacity(self):
+        config = load_effective_config(ROOT, task_override={"team_limits": {"max_active_specialists": 0}})
+
+        result = score_delegation(delegation_case(available_specialist_slots=3), config)
+
+        self.assertEqual(result["route"], "inline")
+        self.assertEqual(result["specialist_count"], 0)
+        self.assertEqual(result["spawn_count"], 0)
+
     def test_team_requested_economy_lowers_margin_but_never_spawns_at_zero(self):
         config = load_effective_config(ROOT, task_override={"mode": "team-requested", "profile": "economy"})
         positive = delegation_case(
@@ -296,6 +305,20 @@ class ReviewCalculationTests(unittest.TestCase):
         config = load_effective_config(ROOT)
         result = score_review(review_case(defect_likelihood=0, impact=0, detection_likelihood=0, review_cost=3, mandatory_independent_review=True), config)
         self.assertEqual(result["route"], "independent-review")
+
+    def test_inline_only_never_silently_spawns_an_independent_reviewer(self):
+        config = load_effective_config(ROOT, task_override={"mode": "inline-only"})
+
+        optional = score_review(review_case(), config)
+        mandatory = score_review(review_case(mandatory_independent_review=True), config)
+
+        self.assertEqual(optional["route"], "self-check")
+        self.assertEqual(optional["spawn_count"], 0)
+        self.assertEqual(optional["question_count"], 0)
+        self.assertEqual(mandatory["route"], "ask-resolution")
+        self.assertEqual(mandatory["spawn_count"], 0)
+        self.assertEqual(mandatory["question_count"], 1)
+        self.assertEqual(mandatory["status"], "unresolved")
 
     def test_mandatory_review_unavailable_blocks_or_requires_accepted_compensation(self):
         config = load_effective_config(ROOT)

@@ -951,8 +951,34 @@ def _bootstrap_interval(differences: Sequence[float], seed: int, samples: int = 
     return round(lower, 6), round(upper, 6)
 
 
+def _bootstrap_statistic_interval(
+    count: int,
+    seed: int,
+    statistic,
+    samples: int = 5000,
+) -> tuple[float, float]:
+    if count < 1:
+        raise ValueError("bootstrap requires paired observations")
+    generator = random.Random(seed)
+    values = sorted(statistic([generator.randrange(count) for _ in range(count)]) for _ in range(samples))
+    lower = values[max(0, math.floor(0.025 * samples) - 1)]
+    upper = values[min(samples - 1, math.ceil(0.975 * samples) - 1)]
+    return (
+        round(lower, 6) if math.isfinite(lower) else lower,
+        round(upper, 6) if math.isfinite(upper) else upper,
+    )
+
+
+def _relative_median_change(baseline: Sequence[float], candidate: Sequence[float]) -> float:
+    baseline_median = statistics.median(baseline)
+    candidate_median = statistics.median(candidate)
+    if baseline_median == 0:
+        return 0.0 if candidate_median == 0 else math.inf
+    return candidate_median / baseline_median - 1.0
+
+
 def _simple_metric_gate(
-    pairs: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]], metric: str, margin: float
+    pairs: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]], metric: str, margin: float, seed: int
 ) -> dict[str, Any]:
     simple = [pair for pair in pairs if pair[0].get("category") in {"direct", "simple", "direct-fast-path", "no-delegation-trap"}]
     if not simple:
@@ -962,16 +988,23 @@ def _simple_metric_gate(
     if len(baseline_values) == len(simple) and len(candidate_values) == len(simple):
         baseline_median = statistics.median(baseline_values)
         candidate_median = statistics.median(candidate_values)
-        if baseline_median == 0:
-            change = 0.0 if candidate_median == 0 else math.inf
-        else:
-            change = candidate_median / baseline_median - 1.0
+        change = _relative_median_change(baseline_values, candidate_values)
+        lower, upper = _bootstrap_statistic_interval(
+            len(simple),
+            seed,
+            lambda indexes: _relative_median_change(
+                [baseline_values[index] for index in indexes],
+                [candidate_values[index] for index in indexes],
+            ),
+        )
+        status = "fail" if lower > margin + 1e-12 else ("pass" if upper <= margin + 1e-12 else "inconclusive")
         return {
-            "status": "pass" if change <= margin + 1e-12 else "fail",
-            "claim_allowed": True,
+            "status": status,
+            "claim_allowed": status != "inconclusive",
             "change": round(change, 6) if math.isfinite(change) else "infinite",
             "baseline_median": round(baseline_median, 6),
             "candidate_median": round(candidate_median, 6),
+            "confidence_interval": {"level": 0.95, "lower": lower, "upper": upper, "method": "paired-bootstrap"},
         }
     proxy_fields = ("model_calls", "spawn_count", "tool_calls", "question_count")
     proxy_changes = {
@@ -994,6 +1027,7 @@ def _high_value_gate(
     quality_margin: float,
     time_margin: float,
     quality_noninferior: bool,
+    seed: int,
 ) -> dict[str, Any]:
     selected = [
         pair for pair in pairs
@@ -1007,20 +1041,59 @@ def _high_value_gate(
             "critical_path_reduction": None,
             "reason": "required bound high-value evaluation group evidence is absent",
         }
-    quality_gain = statistics.fmean(float(candidate["quality"]) - float(baseline["quality"]) for baseline, candidate in selected)
+    quality_differences = [float(candidate["quality"]) - float(baseline["quality"]) for baseline, candidate in selected]
+    quality_gain = statistics.fmean(quality_differences)
+    quality_lower, quality_upper = _bootstrap_interval(quality_differences, seed)
+    quality_status = (
+        "pass"
+        if quality_lower + 1e-12 >= quality_margin
+        else ("fail" if quality_upper + 1e-12 < quality_margin else "inconclusive")
+    )
     baseline_paths = _measured_values([pair[0] for pair in selected], "critical_path")
     candidate_paths = _measured_values([pair[1] for pair in selected], "critical_path")
     reduction: float | None = None
+    time_interval: dict[str, Any] | None = None
+    time_status = "not-applicable"
     if len(baseline_paths) == len(selected) and len(candidate_paths) == len(selected):
         base_median = statistics.median(baseline_paths)
         candidate_median = statistics.median(candidate_paths)
         if base_median > 0:
             reduction = (base_median - candidate_median) / base_median
-    benefit = quality_gain + 1e-12 >= quality_margin or (reduction is not None and reduction + 1e-12 >= time_margin)
+            time_lower, time_upper = _bootstrap_statistic_interval(
+                len(selected),
+                seed + 1,
+                lambda indexes: -_relative_median_change(
+                    [baseline_paths[index] for index in indexes],
+                    [candidate_paths[index] for index in indexes],
+                ),
+            )
+            time_interval = {"level": 0.95, "lower": time_lower, "upper": time_upper, "method": "paired-bootstrap"}
+            time_status = (
+                "pass"
+                if time_lower + 1e-12 >= time_margin
+                else ("fail" if time_upper + 1e-12 < time_margin else "inconclusive")
+            )
+    if not quality_noninferior:
+        status = "fail"
+    elif "pass" in {quality_status, time_status}:
+        status = "pass"
+    elif "inconclusive" in {quality_status, time_status}:
+        status = "inconclusive"
+    else:
+        status = "fail"
     return {
-        "status": "pass" if benefit and quality_noninferior else "fail",
+        "status": status,
         "quality_gain": round(quality_gain, 6),
+        "quality_status": quality_status,
+        "quality_confidence_interval": {
+            "level": 0.95,
+            "lower": quality_lower,
+            "upper": quality_upper,
+            "method": "paired-bootstrap",
+        },
         "critical_path_reduction": round(reduction, 6) if reduction is not None else None,
+        "critical_path_status": time_status,
+        "critical_path_confidence_interval": time_interval,
     }
 
 
@@ -1121,14 +1194,20 @@ def compare_arms(
     quality_claim = "improvement" if lower > 0 else ("non-inferior" if quality_status == "pass" else quality_status)
 
     simple = {
-        metric: _simple_metric_gate(pairs, metric, float(margins["simple_task_cost_latency"]))
-        for metric in ("cost", "latency")
+        metric: _simple_metric_gate(
+            pairs,
+            metric,
+            float(margins["simple_task_cost_latency"]),
+            seed + index + 10,
+        )
+        for index, metric in enumerate(("cost", "latency"))
     }
     high_value = _high_value_gate(
         pairs,
         float(margins["high_value_quality_gain"]),
         float(margins["high_value_critical_path_reduction"]),
         quality_status == "pass",
+        seed + 20,
     )
     baseline_summary = summarize_arm(baseline_runs)
     candidate_summary = summarize_arm(candidate_runs)
@@ -1157,11 +1236,12 @@ def compare_arms(
         or behavioral_failure
         or unexplained_quality_drop
     )
+    statistical_inconclusive = any(value["status"] == "inconclusive" for value in simple.values()) or high_value["status"] == "inconclusive"
     if not (_bundle_verified(baseline, manifest) and _bundle_verified(candidate, manifest)):
         status = "unverified"
     elif failure:
         status = "fail"
-    elif quality_status == "inconclusive":
+    elif quality_status == "inconclusive" or statistical_inconclusive:
         status = "inconclusive"
     else:
         status = "pass"

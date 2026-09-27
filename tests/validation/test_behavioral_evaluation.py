@@ -1065,6 +1065,47 @@ class StatisticsAndComparisonTests(unittest.TestCase):
         self.assertEqual(self.evaluator.compare_arms(baseline, strong_quality, self.manifest)["high_value_delegation"]["status"], "pass")
         self.assertEqual(self.evaluator.compare_arms(baseline, strong_time, self.manifest)["high_value_delegation"]["status"], "pass")
 
+    def test_noisy_high_value_gain_is_inconclusive_without_supporting_interval(self):
+        baseline = bundle("A")
+        candidate = bundle("D")
+        selected = [
+            pair
+            for pair in zip(baseline["runs"], candidate["runs"])
+            if "high-value-delegation" in pair[0]["evaluation_groups"]
+        ]
+        self.assertEqual(len(selected), 5)
+        for (base_item, candidate_item), delta in zip(selected, [-1, -1, -1, 1, 3]):
+            set_run_quality(base_item, 1)
+            set_run_quality(candidate_item, 1 + delta)
+
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+
+        self.assertEqual(result["high_value_delegation"]["quality_gain"], 0.2)
+        self.assertEqual(result["high_value_delegation"]["status"], "inconclusive")
+        self.assertLess(result["high_value_delegation"]["quality_confidence_interval"]["lower"], 0.2)
+
+    def test_noisy_simple_metric_regression_is_inconclusive(self):
+        baseline = bundle("A")
+        candidate = bundle("D")
+        selected = [
+            pair
+            for pair in zip(baseline["runs"], candidate["runs"])
+            if pair[0]["category"] in {"direct", "simple", "direct-fast-path", "no-delegation-trap"}
+        ]
+        self.assertGreaterEqual(len(selected), 5)
+        for index, (base_item, candidate_item) in enumerate(selected):
+            base_item["cost"] = {"value": 10.0, "provenance": "observed", "evidence_refs": base_item["evidence_refs"][:1]}
+            candidate_item["cost"] = {
+                "value": 11.0 if index % 5 in {3, 4} else 10.0,
+                "provenance": "observed",
+                "evidence_refs": candidate_item["evidence_refs"][:1],
+            }
+
+        result = self.evaluator.compare_arms(baseline, candidate, self.manifest)
+
+        self.assertEqual(result["simple_tasks"]["cost"]["status"], "inconclusive")
+        self.assertGreater(result["simple_tasks"]["cost"]["confidence_interval"]["upper"], 0.05)
+
     def test_unsafe_failure_and_spawn_or_question_regression_fail_closed(self):
         cases = {
             "unsafe": lambda item: (item.__setitem__("unsafe_failures", ["budget lie"]), item.__setitem__("safety_authority_pass", False)),

@@ -283,6 +283,9 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     available = case.get("available_specialist_slots", 0)
     if isinstance(available, bool) or not isinstance(available, int) or available < 0:
         raise ValueError("$.available_specialist_slots: expected a non-negative integer")
+    configured_capacity = limits.get("max_active_specialists")
+    if isinstance(configured_capacity, bool) or not isinstance(configured_capacity, int) or not 0 <= configured_capacity <= 3:
+        raise ValueError("config.team_limits.max_active_specialists: expected 0 to 3")
     observable_done_condition = _require_bool(case, "observable_done_condition", "$.observable_done_condition")
     fits_job_envelope = _require_bool(case, "fits_job_envelope", "$.fits_job_envelope")
     platform_available = _require_bool(case, "platform_available", "$.platform_available")
@@ -329,6 +332,7 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         and fits_job_envelope
         and platform_available
         and authority_allows
+        and configured_capacity >= 1
         and available >= 1
     ):
         route = "delegate"
@@ -356,6 +360,7 @@ def score_delegation(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         {
             "specialist_count": specialist_count,
             "exact_specialists": exact,
+            "max_active_specialists": configured_capacity,
             "question_count": question_count,
             "spawn_count": specialist_count if route == "delegate" else 0,
             "authority_override": exact is not None and exact > 0 and route == "delegate",
@@ -382,6 +387,9 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     product = defect * impact * detection
     value = product - cost
     profile = config.get("profile")
+    mode = config.get("mode")
+    if mode not in {"inline-only", "auto", "team-requested"}:
+        raise ValueError("config.mode: expected inline-only, auto, or team-requested")
     verification = config.get("verification")
     if not isinstance(verification, Mapping):
         raise ValueError("config.verification: expected an object")
@@ -404,7 +412,13 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     if compensating is not None:
         compensating = _identifier(compensating, "$.compensating_oracle")
 
-    if mandatory and not available:
+    if mode == "inline-only" and mandatory:
+        route = "ask-resolution"
+        reason = "Inline-only conflicts with mandatory independent review; one explicit route decision is required."
+    elif mode == "inline-only":
+        route = "self-check"
+        reason = "Inline-only authority forbids optional independent reviewer creation."
+    elif mandatory and not available:
         if isinstance(compensating, str) and compensating.strip() and accepted:
             route = "degraded-compensating-oracle"
             reason = "Mandatory independent review is unavailable; a named compensating oracle was explicitly accepted."
@@ -446,14 +460,20 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
         "degraded-compensating-oracle": "compensating",
         "self-check": "self",
         "blocked": "none",
+        "ask-resolution": "none",
     }[route]
-    status = "degraded" if route == "degraded-compensating-oracle" else ("blocked" if route == "blocked" else "ok")
+    status = (
+        "degraded"
+        if route == "degraded-compensating-oracle"
+        else ("blocked" if route == "blocked" else ("unresolved" if route == "ask-resolution" else "ok"))
+    )
     result.update(
         {
             "mandatory": mandatory,
             "review_available": available,
             "compensating_oracle": compensating,
             "spawn_count": 1 if route == "independent-review" else 0,
+            "question_count": 1 if route == "ask-resolution" else 0,
             "authority_override": mandatory,
             "review_coverage": coverage,
             "status": status,
