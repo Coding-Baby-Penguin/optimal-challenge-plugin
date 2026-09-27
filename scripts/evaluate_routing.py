@@ -390,6 +390,17 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     mode = config.get("mode")
     if mode not in {"inline-only", "auto", "team-requested"}:
         raise ValueError("config.mode: expected inline-only, auto, or team-requested")
+    limits = config.get("team_limits")
+    if not isinstance(limits, Mapping):
+        raise ValueError("config.team_limits: expected an object")
+    exact_specialists = limits.get("exact_specialists")
+    if exact_specialists is not None and (
+        isinstance(exact_specialists, bool) or not isinstance(exact_specialists, int) or not 0 <= exact_specialists <= 32
+    ):
+        raise ValueError("config.team_limits.exact_specialists: expected null or 0 to 32")
+    configured_capacity = limits.get("max_active_specialists")
+    if isinstance(configured_capacity, bool) or not isinstance(configured_capacity, int) or not 0 <= configured_capacity <= 3:
+        raise ValueError("config.team_limits.max_active_specialists: expected 0 to 3")
     verification = config.get("verification")
     if not isinstance(verification, Mapping):
         raise ValueError("config.verification: expected an object")
@@ -408,17 +419,19 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     if not isinstance(configured_mandatory, bool):
         raise ValueError("$.config.verification.mandatory_independent_review: expected a boolean")
     mandatory = requested_mandatory or consequential or configured_mandatory
+    inline_authority = mode == "inline-only" or exact_specialists == 0
+    capacity_available = available and (configured_capacity >= 1 or (isinstance(exact_specialists, int) and exact_specialists > 0))
     compensating = case.get("compensating_oracle")
     if compensating is not None:
         compensating = _identifier(compensating, "$.compensating_oracle")
 
-    if mode == "inline-only" and mandatory:
+    if inline_authority and mandatory:
         route = "ask-resolution"
         reason = "Inline-only conflicts with mandatory independent review; one explicit route decision is required."
-    elif mode == "inline-only":
+    elif inline_authority:
         route = "self-check"
         reason = "Inline-only authority forbids optional independent reviewer creation."
-    elif mandatory and not available:
+    elif mandatory and not capacity_available:
         if isinstance(compensating, str) and compensating.strip() and accepted:
             route = "degraded-compensating-oracle"
             reason = "Mandatory independent review is unavailable; a named compensating oracle was explicitly accepted."
@@ -428,7 +441,7 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     elif mandatory:
         route = "independent-review"
         reason = "Independent review is an explicit or consequential-work execution constraint."
-    elif economics_known and value >= margin and available:
+    elif economics_known and value >= margin and capacity_available:
         route = "independent-review"
         reason = "Expected review value meets the profile threshold and an independent reviewer is available."
     else:
@@ -470,7 +483,7 @@ def score_review(case: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str
     result.update(
         {
             "mandatory": mandatory,
-            "review_available": available,
+            "review_available": capacity_available,
             "compensating_oracle": compensating,
             "spawn_count": 1 if route == "independent-review" else 0,
             "question_count": 1 if route == "ask-resolution" else 0,

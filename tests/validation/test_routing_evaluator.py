@@ -320,6 +320,23 @@ class ReviewCalculationTests(unittest.TestCase):
         self.assertEqual(mandatory["question_count"], 1)
         self.assertEqual(mandatory["status"], "unresolved")
 
+    def test_zero_specialist_controls_also_apply_to_independent_review(self):
+        exact_zero = load_effective_config(ROOT, task_override={"team_limits": {"exact_specialists": 0}})
+        capacity_zero = load_effective_config(ROOT, task_override={"team_limits": {"max_active_specialists": 0}})
+
+        exact_optional = score_review(review_case(), exact_zero)
+        exact_mandatory = score_review(review_case(mandatory_independent_review=True), exact_zero)
+        capacity_optional = score_review(review_case(), capacity_zero)
+        capacity_mandatory = score_review(review_case(mandatory_independent_review=True), capacity_zero)
+
+        self.assertEqual(exact_optional["route"], "self-check")
+        self.assertEqual(exact_mandatory["route"], "ask-resolution")
+        self.assertEqual(exact_mandatory["question_count"], 1)
+        self.assertEqual(capacity_optional["route"], "self-check")
+        self.assertEqual(capacity_mandatory["route"], "blocked")
+        for result in (exact_optional, exact_mandatory, capacity_optional, capacity_mandatory):
+            self.assertEqual(result["spawn_count"], 0)
+
     def test_mandatory_review_unavailable_blocks_or_requires_accepted_compensation(self):
         config = load_effective_config(ROOT)
         blocked = score_review(review_case(mandatory_independent_review=True, independent_review_available=False), config)
