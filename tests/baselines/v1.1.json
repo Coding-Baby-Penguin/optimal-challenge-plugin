@@ -11,6 +11,6 @@
   "raw_result_ids": [],
   "aggregate": null,
   "comparative_claims_allowed": false,
-  "reason": "No isolated fresh-task v1.1 host run has been recorded for this evaluation manifest.",
-  "next_action": "Install the pinned v1.1 archive in a clean cache, verify read-back, and run the matrix in fresh disposable tasks before recording any comparison."
+  "reason": "Task 10 preflight found the exact 51bab08e archive, but four archive members differ from pinned commit c3c379ab, the remote v1.1.0 tag targets b4510c8, and no baseline-c3c379ab installation read-back exists; no behavioral run was valid.",
+  "next_action": "Reconcile one immutable v1.1 commit, tag, and archive identity, then install it with the pinned cachebuster and run the matrix in fresh disposable tasks before recording any comparison."
 }
