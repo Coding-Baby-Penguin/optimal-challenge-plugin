@@ -558,6 +558,8 @@ def _compute_semantic_result(formula_id: str, inputs: Mapping[str, Any]) -> dict
         gates = all(inputs[name] for name in ("authority_allows", "platform_available", "fits_job_envelope", "observable_done_condition"))
         exact = inputs["exact_specialists"]
         effective_host_max = min(32, int(inputs["detected_host_max"]))
+        if exact == 0:
+            return {"route": "inline", "specialist_count": 0}
         if exact is not None:
             fits = gates and exact <= effective_host_max and exact <= int(inputs["available_slots"]) and exact <= int(inputs["budget_capacity"])
             return {"route": "delegate" if fits else "resolution-question", "specialist_count": int(exact) if fits else 0}

@@ -11,6 +11,9 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
+from scripts.evaluate_routing import score_delegation
+from scripts.orchestration_config import load_effective_config
+
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "scripts" / "evaluate_behavior.py"
@@ -538,6 +541,91 @@ class ReviewerRegressionTests(unittest.TestCase):
                 self.assertEqual(case["expected_spawn_count"], count)
                 self.assertEqual(semantic["expected"]["route"], route)
                 self.assertEqual(semantic["expected"]["specialist_count"], count)
+
+    def test_team_sizing_exact_counts_match_task_two_routing(self):
+        base_inputs = {
+            "exact_specialists": None,
+            "independent_workstreams": 0,
+            "max_active_specialists": 3,
+            "detected_host_max": 8,
+            "available_slots": 8,
+            "budget_capacity": 8,
+            "authority_allows": True,
+            "platform_available": True,
+            "fits_job_envelope": True,
+            "observable_done_condition": True,
+            "benefit_parallel": 0,
+            "benefit_independence": 0,
+            "benefit_context": 0,
+            "benefit_quality": 0,
+            "cost_setup": 3,
+            "cost_transfer": 3,
+            "cost_merge": 3,
+            "cost_review_rework": 3,
+            "delegation_margin": 1,
+        }
+        cases = (
+            (0, 8, 8, 8, "inline", 0),
+            (1, 8, 8, 8, "delegate", 1),
+            (5, 4, 4, 8, "resolution-question", 0),
+            (5, 8, 5, 5, "delegate", 5),
+        )
+        for exact, host_max, slots, budget, expected_route, expected_count in cases:
+            with self.subTest(exact=exact, host_max=host_max, slots=slots, budget=budget):
+                inputs = deepcopy(base_inputs)
+                inputs.update(
+                    exact_specialists=exact,
+                    detected_host_max=host_max,
+                    available_slots=slots,
+                    budget_capacity=budget,
+                )
+                behavioral = self.evaluator._compute_semantic_result("team-sizing.policy.v1", inputs)
+                if exact > host_max:
+                    with self.assertRaisesRegex(ValueError, f"effective host maximum {host_max}"):
+                        load_effective_config(
+                            ROOT,
+                            task_override={"team_limits": {"exact_specialists": exact}},
+                            detected_host_max=host_max,
+                        )
+                config = load_effective_config(
+                    ROOT,
+                    task_override={"team_limits": {"exact_specialists": exact}},
+                    detected_host_max=max(host_max, exact),
+                )
+                task_two = score_delegation(
+                    {
+                        "id": f"exact-{exact}",
+                        "benefits": {"parallel": 0, "independence": 0, "context": 0, "quality": 0},
+                        "costs": {"setup": 3, "transfer": 3, "merge": 3, "review_rework": 3},
+                        "observable_done_condition": True,
+                        "fits_job_envelope": True,
+                        "available_specialist_slots": slots if exact <= host_max else host_max,
+                        "platform_available": True,
+                        "authority_allows": True,
+                        "evidence_ids": [f"host:max-{host_max}", f"slots:{slots}"],
+                        "provenance": "observed",
+                    },
+                    config,
+                )
+                canonical_task_two_route = {
+                    "ask-resolution": "resolution-question",
+                }.get(task_two["route"], task_two["route"])
+                self.assertEqual(behavioral, {"route": expected_route, "specialist_count": expected_count})
+                self.assertEqual(canonical_task_two_route, expected_route)
+                self.assertEqual(task_two["specialist_count"], expected_count)
+
+    def test_team_sizing_exact_count_rejects_negative_and_boolean_values(self):
+        index = next(
+            i
+            for i, record in enumerate(bundle()["runs"])
+            if record["calculation"]["formula"] == "team-sizing.policy.v1"
+        )
+        for invalid in (-1, True):
+            with self.subTest(invalid=invalid):
+                altered = bundle()
+                altered["runs"][index]["calculation"]["inputs"]["exact_specialists"] = invalid
+                errors = " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower()
+                self.assertIn("exact_specialists", errors)
 
     def test_missing_structured_question_calculation_rubric_and_evidence_fields_fail(self):
         fields = (
