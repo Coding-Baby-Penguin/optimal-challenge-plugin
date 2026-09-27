@@ -13,6 +13,28 @@ SKILL = ROOT / "skills" / "optimal-challenge"
 REFERENCES = SKILL / "references"
 TEMPLATES = SKILL / "templates"
 
+CHECKPOINT_BYPASS = re.compile(
+    r"^(?=[^\n]*\b(?:skip|bypass|omit|ignore)\b)(?=[^\n]*\bgoal-drift checkpoint\b)[^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+ROOT_GOAL_REPLACEMENT = re.compile(
+    r"^(?:"
+    r"[^\n]*\b(?:reviewer|worker|teammate|phase|assignment)\b[^\n]*\b(?:may|can)\b\s+"
+    r"(?:be\s+)?(?:overwrite|replace|redefine|replaced)\b[^\n]*\broot goal\b"
+    r"|[^\n]*\broot goal\b[^\n]*\b(?:may|can)\b\s+(?:be\s+)?"
+    r"(?:overwrite|replace|redefine|replaced)\b[^\n]*\b(?:reviewer|worker|teammate|phase|assignment)\b"
+    r")[^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+FULL_TRANSCRIPT_FORWARDING = re.compile(
+    r"^(?:always\s+)?(?:forward|include|pass|return)\s+(?:the\s+)?(?:complete|full)\s+transcripts\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+FRESH_HOST_VERIFIED = re.compile(
+    r"^fresh-host behavioral acceptance[^\n.]*\bverified\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 class GoalAndContextContracts(unittest.TestCase):
     def read(self, path: Path) -> str:
@@ -80,14 +102,8 @@ class GoalAndContextContracts(unittest.TestCase):
             self.assertIn(field, body)
         self.assertIn("prune", body)
         self.assertIn("root goal", body)
-        self.assertNotRegex(
-            text,
-            r"(?mi)^(?:always\s+)?(?:skip|bypass|omit)\s+(?:the\s+)?goal-drift checkpoint\b",
-        )
-        self.assertNotRegex(
-            text,
-            r"(?mi)^(?:always\s+)?(?:forward|include|pass)\s+(?:the\s+)?(?:complete|full)\s+transcripts\b",
-        )
+        self.assertIsNone(CHECKPOINT_BYPASS.search(text))
+        self.assertIsNone(FULL_TRANSCRIPT_FORWARDING.search(text))
 
     def test_context_policy_defines_observable_relevance_filter_and_drift_checkpoint(self):
         self.assert_context_policy_contract(self.read(REFERENCES / "context-management.md"))
@@ -96,6 +112,7 @@ class GoalAndContextContracts(unittest.TestCase):
         policy = self.read(REFERENCES / "context-management.md")
         contradictions = (
             "\nSkip the goal-drift checkpoint before costly research.\n",
+            "\nIgnore the goal-drift checkpoint and pursue every costly tangent.\n",
             "\nForward full transcripts to every specialist for completeness.\n",
         )
         for contradiction in contradictions:
@@ -112,14 +129,8 @@ class GoalAndContextContracts(unittest.TestCase):
             "goal-relevant delta",
         ):
             self.assertIn(required, text)
-        self.assertNotRegex(
-            text,
-            r"(?mi)^(?:a\s+)?(?:reviewer|worker|teammate|phase|assignment)\s+may\s+(?:overwrite|replace|redefine)\s+(?:the\s+)?root goal\b",
-        )
-        self.assertNotRegex(
-            text,
-            r"(?mi)^(?:always\s+)?(?:forward|include|pass|return)\s+(?:the\s+)?(?:complete|full)\s+transcripts\b",
-        )
+        self.assertIsNone(ROOT_GOAL_REPLACEMENT.search(text))
+        self.assertIsNone(FULL_TRANSCRIPT_FORWARDING.search(text))
 
     def test_handoff_policy_preserves_root_goal_and_returns_only_relevant_delta(self):
         for text in (
@@ -132,6 +143,7 @@ class GoalAndContextContracts(unittest.TestCase):
         policy = self.read(REFERENCES / "team-continuity.md")
         contradictions = (
             "\nA reviewer may overwrite the root goal when its local analysis is persuasive.\n",
+            "\nThe root goal can be replaced by a reviewer without an explicit user decision.\n",
             "\nReturn complete transcripts to the next worker.\n",
         )
         for contradiction in contradictions:
@@ -149,10 +161,7 @@ class GoalAndContextContracts(unittest.TestCase):
         self.assertIn("load [context management](references/context-management.md)", router)
         self.assertIn("run its goal-drift checkpoint", router)
         self.assertIn("cheap, reversible direct work", router)
-        self.assertNotRegex(
-            router,
-            r"(?mi)^(?:always\s+)?(?:skip|bypass|omit)\s+(?:the\s+)?goal-drift checkpoint\b",
-        )
+        self.assertIsNone(CHECKPOINT_BYPASS.search(router))
 
     def test_router_mandates_goal_drift_checkpoint_only_after_direct_fast_path(self):
         self.assert_router_goal_gate_contract(self.read(SKILL / "SKILL.md"))
@@ -164,8 +173,9 @@ class GoalAndContextContracts(unittest.TestCase):
                 "Before costly research, delegation, replanning, or review",
                 "Before expensive work",
             ),
-            lambda text: text.replace("cheap, reversible direct work", "every request"),
+            lambda text: text.replace("Cheap, reversible direct work", "Every request"),
             lambda text: text + "\nSkip the goal-drift checkpoint when deadlines are tight.\n",
+            lambda text: text + "\nIgnore the goal-drift checkpoint whenever a reviewer requests work.\n",
         )
         for mutate in mutations:
             mutated = mutate(router)
@@ -187,10 +197,7 @@ class GoalAndContextContracts(unittest.TestCase):
             "unverified",
         ):
             self.assertIn(required, text)
-        self.assertNotRegex(
-            text,
-            r"fresh-host behavioral acceptance\s+(?:is|:)?\s*(?:`)?verified(?:`)?",
-        )
+        self.assertIsNone(FRESH_HOST_VERIFIED.search(text))
 
     def test_project_state_template_has_one_compact_goal_contract(self):
         text = self.read(TEMPLATES / "PROJECT-STATE.md").lower()
@@ -213,9 +220,14 @@ class GoalAndContextContracts(unittest.TestCase):
 
     def test_project_state_truth_contract_rejects_false_fresh_host_verification(self):
         state = self.read(ROOT / "docs" / "PROJECT-STATE.md")
-        contradiction = "\nFresh-host behavioral acceptance is VERIFIED.\n"
-        with self.assertRaises(AssertionError):
-            self.assert_project_state_truth_contract(state + contradiction)
+        contradictions = (
+            "\nFresh-host behavioral acceptance is VERIFIED.\n",
+            "\nFresh-host behavioral acceptance is completely verified.\n",
+        )
+        for contradiction in contradictions:
+            with self.subTest(contradiction=contradiction.strip()):
+                with self.assertRaises(AssertionError):
+                    self.assert_project_state_truth_contract(state + contradiction)
 
     def test_scenario_matrix_covers_drift_pruning_without_burdening_direct_work(self):
         scenarios = {

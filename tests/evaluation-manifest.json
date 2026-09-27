@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "prompt_hashes": {
-    "router": "4931cda3df7a40bf2d5fc931119c7a249bc573f1c044c3df9f661d84bb779ba5",
+    "router": "9946bd4c8c0a4f489685ab17f43229c796df9bab096a2fa0ad3c5c722d86e5c3",
     "question_bundle": "7f92a32320192f499cf4535f901b8dccd259ab6b9ec4fc5d29058c0affd0f5b4"
   },
   "fixture_hashes": {
