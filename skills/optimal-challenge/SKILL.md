@@ -15,7 +15,7 @@ Route every request with minimum context and compute. System, developer, and exp
 4. Reuse an applicable approved plan and its next unfinished step. Replan only when invalidated, decisions are missing, or requested.
 5. Select the smallest matching specialist. Availability and universal-use claims are not selection evidence.
 
-Only after rejecting direct work, load [premise validation](references/premise-validation.md) for material assumptions. Load [team orchestration](references/team-orchestration.md) and [cost-quality routing](references/cost-quality-routing.md) only for a real multi-workstream or explicit delegation decision. Load [team continuity](references/team-continuity.md) for reuse or fresh independence.
+Only after rejecting direct work, load [premise validation](references/premise-validation.md) for material assumptions. For production with material scale, paid-generation, rejection, or rework risk, load [research before scale](references/high-cost-research.md). Load [team orchestration](references/team-orchestration.md) and [cost-quality routing](references/cost-quality-routing.md) only for a real multi-workstream or explicit delegation decision. Load [team continuity](references/team-continuity.md) for reuse or fresh independence.
 
 ## Superpowers boundary
 - Never invoke `superpowers:using-superpowers`; this router replaces it.

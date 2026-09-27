@@ -6,6 +6,8 @@ Enter this gate only after the router rejects stable, single-step, low-risk dire
 
 Before decomposition, capture the goal and observable success criteria, constraints and authoritative evidence, material assumptions, reversible defaults, and irreversible or high-rework choices. Investigate facts available from tools, repository state, or settled decisions before asking the user.
 
+When production at scale would make rejection, paid generation, or rework materially costly, use [research before scale](high-cost-research.md) to establish acceptance criteria and validate a representative pilot before scaling.
+
 For each unresolved material premise, record evidence and evidence provenance, then calculate:
 
 ```text

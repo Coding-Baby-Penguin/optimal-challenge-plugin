@@ -305,6 +305,92 @@ class PackageIndependentReview(unittest.TestCase):
         self.assertIn("questionvalue > 0", text)
         self.assertIn("never re-ask", text)
 
+    def test_high_cost_research_gate_is_lazy_bounded_and_evidence_bearing(self):
+        router = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").lower()
+        self.assertIn("references/high-cost-research.md", router)
+
+        text = (SKILL_DIR / "references" / "high-cost-research.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "materially costly",
+            "success criteria are not established",
+            "authoritative",
+            "provenance",
+            "contradictory evidence",
+            "stop condition",
+            "observable acceptance rubric",
+            "smallest adequate",
+            "risk-representative",
+            "deterministic checks",
+            "user-only",
+            "question bundle",
+            "provisional",
+            "unverified",
+            "acceptance-ready",
+            "preference",
+            "durable cloud persistence",
+            "budget enforcement",
+        ]:
+            self.assertIn(phrase, text)
+        self.assertRegex(text, r"low-cost[^.]+reversible[^.]+direct")
+        self.assertRegex(text, r"research[^.]+and[^.]+pilot")
+        self.assertRegex(text, r"pilot[^.]+pass[^.]+before[^.]+scal")
+        self.assertNotRegex(text, r"(?:exactly|always|must use)\s+(?:two|three|2|3)\s+(?:samples|stickers|images)")
+
+    def test_high_cost_research_scenarios_cover_scale_and_truth_boundaries(self):
+        scenarios = {
+            scenario["id"]: scenario
+            for scenario in json.loads((ROOT / "tests" / "scenarios.json").read_text(encoding="utf-8"))
+        }
+        contracts = {
+            "scale-sticker-01": {
+                "tokens": ["sticker pack", "rejected", "criteria"],
+                "expect": "research-rubric-and-varied-risk-representative-pilot-before-full-pack",
+                "modules": {"premise-validation", "high-cost-research"},
+            },
+            "scale-paid-01": {
+                "tokens": ["120", "paid", "success criteria"],
+                "expect": "research-rubric-and-smallest-adequate-risk-representative-pilot-before-paid-scale",
+                "modules": {"premise-validation", "high-cost-research"},
+            },
+            "scale-low-cost-01": {
+                "tokens": ["single disposable sticker", "cheap", "reversible"],
+                "expect": "direct-without-research-or-pilot-gate",
+                "modules": set(),
+            },
+            "scale-rubric-01": {
+                "tokens": ["authoritative rubric", "batch", "pilot"],
+                "expect": "skip-redundant-research-but-run-risk-representative-pilot",
+                "modules": {"high-cost-research"},
+            },
+            "scale-settled-pilot-01": {
+                "tokens": ["approved pilot", "same rubric", "scale"],
+                "expect": "reuse-settled-pilot-evidence-without-reasking",
+                "modules": {"high-cost-research"},
+            },
+            "scale-skip-pressure-01": {
+                "tokens": ["skip research", "full batch", "acceptance-ready"],
+                "expect": "only-safe-provisional-unverified-output-not-acceptance-ready",
+                "modules": {"high-cost-research", "failure-visibility"},
+            },
+            "scale-stop-01": {
+                "tokens": ["research", "stop condition", "authoritative"],
+                "expect": "bounded-research-stops-when-rubric-can-decide-pilot",
+                "modules": {"high-cost-research"},
+            },
+            "scale-settings-truth-01": {
+                "tokens": ["task override", "cloud", "budget enforcement"],
+                "expect": "treat-override-as-guidance-not-persistence-or-enforcement-proof",
+                "modules": {"high-cost-research", "failure-visibility"},
+            },
+        }
+        for scenario_id, contract in contracts.items():
+            self.assertIn(scenario_id, scenarios)
+            scenario = scenarios[scenario_id]
+            prompt = scenario["prompt"].lower()
+            self.assertTrue(all(token in prompt for token in contract["tokens"]), scenario_id)
+            self.assertEqual(scenario["expect"], contract["expect"])
+            self.assertEqual(set(scenario["modules"]), contract["modules"], scenario_id)
+
     def test_team_policy_preserves_invocation_authority_and_budget_truth(self):
         orchestration = (SKILL_DIR / "references" / "team-orchestration.md").read_text(encoding="utf-8").lower()
         for phrase in [
