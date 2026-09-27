@@ -9,6 +9,7 @@ from pathlib import Path
 
 import capability_matrix
 import evaluate_behavior
+from evaluate_research_gate import validate_manifest as validate_research_manifest
 from evaluate_routing import validate_manifest as validate_routing_manifest
 from orchestration_config import load_effective_config, validate_config
 from orchestration_state import validate_orchestration_state
@@ -77,6 +78,12 @@ def run_integrated_checks() -> None:
         errors.append(f"Team routing: {exc}")
 
     try:
+        count = validate_research_manifest(configured_path("researchGateScenarios", "tests/research-gate.json"))
+        integrated_evidence.append(f"Research-before-scale: PASSED ({count} cases)")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"Research-before-scale: {exc}")
+
+    try:
         registry = read_json(ROOT / "tests/fixtures/orchestration/valid-registry.json")
         ledger = read_json(ROOT / "tests/fixtures/orchestration/valid-ledger.json")
         for key, fallback in (
@@ -138,6 +145,7 @@ for rel in [
     "README.md",
     ".gitignore",
     "tests/scenarios.json",
+    "tests/research-gate.json",
     "tests/validation/test_package.py",
 ]:
     check((ROOT / rel).is_file(), f"Missing required file: {rel}")

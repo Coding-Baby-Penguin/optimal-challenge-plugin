@@ -47,9 +47,11 @@ class PackageIndependentReview(unittest.TestCase):
             "teamRegistrySchema": "config/team-registry.schema.json",
             "allocationLedgerSchema": "config/allocation-ledger.schema.json",
             "routingScenarios": "tests/team-routing.json",
+            "researchGateScenarios": "tests/research-gate.json",
             "behavioralScenarios": "tests/behavioral-acceptance.json",
             "evaluationManifest": "tests/evaluation-manifest.json",
             "routingEvaluator": "scripts/evaluate_routing.py",
+            "researchGateEvaluator": "scripts/evaluate_research_gate.py",
             "behavioralEvaluator": "scripts/evaluate_behavior.py",
             "orchestrationValidator": "scripts/validate_orchestration.py",
             "capabilityValidator": "scripts/capability_matrix.py",
@@ -390,6 +392,16 @@ class PackageIndependentReview(unittest.TestCase):
             self.assertTrue(all(token in prompt for token in contract["tokens"]), scenario_id)
             self.assertEqual(scenario["expect"], contract["expect"])
             self.assertEqual(set(scenario["modules"]), contract["modules"], scenario_id)
+
+    def test_readme_documents_research_before_scale_contract(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+        for phrase in [
+            "research before scale",
+            "smallest adequate",
+            "provisional",
+            "evaluate_research_gate.py",
+        ]:
+            self.assertIn(phrase, text)
 
     def test_team_policy_preserves_invocation_authority_and_budget_truth(self):
         orchestration = (SKILL_DIR / "references" / "team-orchestration.md").read_text(encoding="utf-8").lower()

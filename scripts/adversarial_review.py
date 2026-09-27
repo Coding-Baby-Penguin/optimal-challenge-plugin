@@ -8,8 +8,12 @@ from pathlib import Path
 
 try:
     from .evaluate_routing import validate_manifest as validate_routing_manifest
+    from .evaluate_research_gate import evaluate_case as evaluate_research_case
+    from .evaluate_research_gate import validate_manifest as validate_research_manifest
 except ImportError:  # Direct CLI execution puts scripts/ on sys.path.
     from evaluate_routing import validate_manifest as validate_routing_manifest
+    from evaluate_research_gate import evaluate_case as evaluate_research_case
+    from evaluate_research_gate import validate_manifest as validate_research_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +38,30 @@ def unconditional_costly_behavior_issues(policy_texts):
             if re.search(pattern, content, re.IGNORECASE):
                 found.append(f"{source}: unconditional costly behavior matches {pattern}")
     return found
+
+
+def research_gate_issues(policy_texts, evaluator=evaluate_research_case, root: Path = ROOT):
+    """Reject contradiction loopholes and semantic evaluators that permit unsafe scaling."""
+
+    issues = []
+    policy = policy_texts.get("high-cost-research.md", "")
+    if not isinstance(policy, str):
+        return ["Research gate policy is not text"]
+    if re.search(r"resolved\s+or\s+exposed", policy, re.IGNORECASE):
+        issues.append("Research gate permits material contradictions to be resolved or exposed")
+    for required in (
+        "unresolved material contradiction blocks acceptance-ready scaling",
+        "exactly one blocking question bundle",
+        "no larger than the smallest adequate pilot or draft",
+        "never produce the full costly batch",
+    ):
+        if required not in policy.lower():
+            issues.append(f"Research gate policy missing fail-closed rule: {required}")
+    try:
+        validate_research_manifest(root / "tests" / "research-gate.json", evaluator=evaluator)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        issues.append(f"Research gate semantic disagreement: {exc}")
+    return issues
 
 
 def collect_issues(root: Path = ROOT) -> tuple[list[str], int]:
@@ -70,6 +98,7 @@ def collect_issues(root: Path = ROOT) -> tuple[list[str], int]:
     ]:
         require(phrase in combined.lower(), f"Missing critical guardrail: {phrase}")
     issues.extend(unconditional_costly_behavior_issues(runtime_policy))
+    issues.extend(research_gate_issues(runtime_policy, root=root))
 
     orchestration = json.loads((root / "config" / "orchestration.json").read_text(encoding="utf-8"))
     privacy = orchestration.get("persistence_privacy", {})

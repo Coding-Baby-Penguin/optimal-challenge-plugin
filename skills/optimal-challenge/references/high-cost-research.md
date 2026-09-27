@@ -7,18 +7,18 @@ Research and pilot are separate gates: research is required only when success cr
 ## Bounded workflow
 
 1. **Set the research decision.** Identify the expensive commitment, material failure dimensions, existing authoritative evidence, and what the research must decide. Record a stop condition before searching; do not start broad, aimless research.
-2. **Establish current criteria.** Prefer current authoritative acceptance, success, and rejection criteria. Record evidence IDs, provenance, scope/date, and contradictory evidence. Resolve contradictions that change the pilot or disclose them in the rubric.
+2. **Establish current criteria.** Prefer current authoritative acceptance, success, and rejection criteria. Record evidence IDs, provenance, scope/date, and contradictory evidence. Classify each contradiction as material decision-changing or non-material. Resolve every material contradiction through authoritative precedence, freshness, or applicability evidence. An unresolved material contradiction blocks acceptance-ready scaling; merely disclosing it is insufficient. Non-decision-changing contradictions may be disclosed.
 3. **Build an observable acceptance rubric.** For each material dimension, record the pass condition, evidence source, check method, and any unresolved user-only visual, audience, or brand decision. A preference is not a measurable pass condition by itself.
 4. **Create the smallest adequate risk-representative pilot.** Cover the dimensions most likely to invalidate the full output; do not use a fixed universal sample size. For a sticker pack, use a small varied contact sheet that exercises materially different expressions, silhouettes, crops, and small-size readability instead of producing the whole pack.
-5. **Validate before scaling.** Run deterministic checks first, then obtain any genuinely user-only judgment. When input is needed, ask one question bundle with the recommendation, impact, and next step. The pilot must pass the rubric before scaling production.
+5. **Validate before scaling.** Run deterministic checks first, then obtain any genuinely user-only judgment. Convert a material contradiction that remains a genuine user-only choice into exactly one blocking question bundle with the recommendation, impact, safe continuing work, and next step. The pilot must pass the rubric before scaling production.
 
-The research stop condition is met when authoritative evidence supports every material rubric dimension, decision-changing contradictions are resolved or exposed, and another query is unlikely to change the pilot design or go/no-go decision. Stop there.
+The research stop condition is met only when authoritative evidence supports every material rubric dimension and all material contradictions are resolved or converted into an explicit blocking decision. Another query must also be unlikely to change the pilot design or go/no-go decision. Stop there. Non-material contradictions may remain disclosed.
 
 ## Reuse and refusal
 
 Skip redundant research when an applicable authoritative rubric is already current. Reuse a settled approved pilot without re-asking when the rubric, inputs, scope, and material risks remain unchanged and no contradictory evidence invalidates it.
 
-If the user knowingly refuses research or the pilot, continue only where safe and label the output **provisional** and **unverified**. Do not describe the full output as acceptance-ready. If skipping would cross a safety or authorization boundary, block that action rather than relabeling it.
+If the user knowingly refuses research or the pilot, continue only where safe with non-scaled provisional exploration no larger than the smallest adequate pilot or draft, labeled **provisional** and **unverified**. Never produce the full costly batch or describe it as acceptance-ready. If skipping would cross a safety or authorization boundary, block that action rather than relabeling it.
 
 ## Truth boundaries
 
@@ -30,4 +30,4 @@ Keep preference, configuration storage, application, permissions, and enforcemen
 | Costly scale and success criteria are not established | Bounded research, rubric, then pilot |
 | Authoritative rubric exists but scale risk remains | Reuse rubric; run the smallest adequate pilot |
 | Matching approved pilot remains valid | Scale without repeating the question |
-| Research or pilot refused | Safe provisional output only; never acceptance-ready |
+| Research or pilot refused | Non-scaled provisional pilot/draft only; never the full batch or acceptance-ready |

@@ -21,9 +21,11 @@
     "teamRegistrySchema": "config/team-registry.schema.json",
     "allocationLedgerSchema": "config/allocation-ledger.schema.json",
     "routingScenarios": "tests/team-routing.json",
+    "researchGateScenarios": "tests/research-gate.json",
     "behavioralScenarios": "tests/behavioral-acceptance.json",
     "evaluationManifest": "tests/evaluation-manifest.json",
     "routingEvaluator": "scripts/evaluate_routing.py",
+    "researchGateEvaluator": "scripts/evaluate_research_gate.py",
     "behavioralEvaluator": "scripts/evaluate_behavior.py",
     "orchestrationValidator": "scripts/validate_orchestration.py",
     "capabilityValidator": "scripts/capability_matrix.py"

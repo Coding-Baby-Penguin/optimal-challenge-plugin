@@ -51,6 +51,12 @@ The premise gate runs only after the direct fast path is rejected. It records `P
 
 When input is genuinely required, all currently knowable user-only blockers appear in one bundle with a recommended default, impact, safe work that can continue, and next steps. Material answers receive stable decision IDs; a settled decision is not asked again unless new contradictory evidence is cited. Mode, profile, and budget are not exposed merely for configuration theatre.
 
+### Research before scale
+
+When rejection, paid generation, or broad rework makes a batch materially costly, the plugin establishes current authoritative acceptance criteria before production. It converts those findings into an observable rubric, resolves material contradictions, and validates the smallest adequate risk-representative pilot before scaling. Existing current rubrics skip redundant research, and settled representative pilot approval is reused without re-asking.
+
+Refusing research or a pilot permits only non-scaled provisional exploration no larger than that pilot or draft, never the full costly batch or an acceptance-ready claim. Task overrides remain guidance; they do not prove durable cloud persistence or budget enforcement.
+
 ## Budget assignment and truthfulness
 
 Budget fields always name their unit (`tokens`, `credits`, time, currency, tool calls, or model calls), limit, measurement (`observed`, `estimated`, or `unavailable`), source, and enforcement (`advisory`, `local_enforced`, or `provider_enforced`). Units are never converted without a verified mapping.
@@ -106,11 +112,13 @@ optimal-challenge/
 ├── scripts/
 │   ├── validate.py                 integrated Task 1–7 structural gate
 │   ├── evaluate_routing.py         executable premise/delegation/review calculations
+│   ├── evaluate_research_gate.py   executable research/pilot/scale decisions
 │   ├── validate_orchestration.py   registry/ledger schema and invariant gate
 │   ├── capability_matrix.py        trusted surface capability resolution
 │   └── evaluate_behavior.py        recorded fresh-host run evaluator
 └── tests/
     ├── scenarios.json              structural trigger/anti-trigger matrix
+    ├── research-gate.json          research-before-scale semantic cases
     ├── team-routing.json           deterministic routing cases
     ├── behavioral-acceptance.json  fresh-host acceptance contract
     ├── evaluation-manifest.json    pinned A/B/C/D evaluation identity
@@ -203,6 +211,7 @@ python scripts/validate.py
 python -m unittest discover -v
 python scripts/adversarial_review.py
 python scripts/evaluate_routing.py tests/team-routing.json
+python scripts/evaluate_research_gate.py tests/research-gate.json
 ```
 
 Use Python 3.12 and install pinned development-only schema dependencies from `requirements-dev.txt` into a disposable target as shown in [`config/README.md`](config/README.md). The integrated validator checks manifest consistency, routing calculations, valid orchestration state, capability contracts, behavioral fixture identity, skill/reference integrity, and the absence of active components. It reports fresh-host behavioral acceptance as `UNVERIFIED` until Task 10 supplies isolated recorded runs; structural success is not host-model proof.
