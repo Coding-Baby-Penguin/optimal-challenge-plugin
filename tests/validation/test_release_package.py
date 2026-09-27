@@ -3,16 +3,89 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
+import struct
+import subprocess
+import sys
 import tempfile
 import unittest
+import warnings
 import zipfile
+import zlib
 from pathlib import Path
 
 from scripts.package_release import build_archive, compare_archive, iter_package_files
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def canonical_zip_bytes(root: Path, files: list[Path]) -> bytes:
+    """Build the expected ZIP bytes without using the production writer."""
+
+    local_parts: list[bytes] = []
+    central_parts: list[bytes] = []
+    offset = 0
+    made_by = (3 << 8) | 20
+    version_needed = 20
+    dos_time = 0
+    dos_date = 33
+    external_attr = (stat.S_IFREG | 0o644) << 16
+    for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
+        name = path.relative_to(root).as_posix().encode("ascii")
+        data = path.read_bytes()
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        local = struct.pack(
+            "<IHHHHHIIIHH",
+            0x04034B50,
+            version_needed,
+            0,
+            zipfile.ZIP_STORED,
+            dos_time,
+            dos_date,
+            crc,
+            len(data),
+            len(data),
+            len(name),
+            0,
+        ) + name + data
+        central = struct.pack(
+            "<IHHHHHHIIIHHHHHII",
+            0x02014B50,
+            made_by,
+            version_needed,
+            0,
+            zipfile.ZIP_STORED,
+            dos_time,
+            dos_date,
+            crc,
+            len(data),
+            len(data),
+            len(name),
+            0,
+            0,
+            0,
+            0,
+            external_attr,
+            offset,
+        ) + name
+        local_parts.append(local)
+        central_parts.append(central)
+        offset += len(local)
+    central = b"".join(central_parts)
+    end = struct.pack(
+        "<IHHHHIIH",
+        0x06054B50,
+        0,
+        0,
+        len(files),
+        len(files),
+        len(central),
+        offset,
+        0,
+    )
+    return b"".join(local_parts) + central + end
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -30,11 +103,27 @@ class ReleasePackageTests(unittest.TestCase):
         (self.root / "dist" / "old.zip").write_bytes(b"old")
         (self.root / "nested" / "__pycache__").mkdir()
         (self.root / "nested" / "__pycache__" / "cached.pyc").write_bytes(b"cache")
+        self._git("init", "-q")
+        self._git("add", "-f", ".codex-plugin/plugin.json", "a.txt", "nested/z.txt")
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def _git(self, *args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(self.root), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def test_iter_package_files_is_sorted_posix_includes_hidden_manifest_and_excludes_configured_paths(self):
+        (self.root / "untracked.txt").write_text("must not ship", encoding="utf-8")
+        (self.root / ".env").write_text("SECRET=not-real", encoding="utf-8")
+        (self.root / "credentials.live.json").write_text("{}", encoding="utf-8")
+        (self.root / "private.pem").write_text("not-a-key", encoding="utf-8")
+        (self.root / "node_modules").mkdir()
+        (self.root / "node_modules" / "dep.js").write_text("dependency", encoding="utf-8")
         files = iter_package_files(
             self.root,
             ["dist/**", "**/__pycache__/**", "**/*.py[cod]"],
@@ -45,12 +134,47 @@ class ReleasePackageTests(unittest.TestCase):
             [".codex-plugin/plugin.json", "a.txt", "nested/z.txt"],
         )
 
+    def test_tracked_sensitive_path_fails_closed_but_narrow_safe_examples_are_allowed(self):
+        (self.root / ".env").write_text("SECRET=not-real", encoding="utf-8")
+        self._git("add", "-f", ".env")
+        with self.assertRaisesRegex(ValueError, "sensitive tracked path"):
+            iter_package_files(self.root, [".env", ".env.*"])
+
+        self._git("rm", "--cached", "-q", ".env")
+        (self.root / ".env.example").write_text("TOKEN=<set-locally>", encoding="utf-8")
+        (self.root / "credentials.example.json").write_text("{}", encoding="utf-8")
+        (self.root / "docs" / "superpowers").mkdir(parents=True)
+        (self.root / "docs" / "superpowers" / ".env.example").write_text(
+            "TOKEN=<not-distributable>", encoding="utf-8"
+        )
+        self._git(
+            "add",
+            "-f",
+            ".env.example",
+            "credentials.example.json",
+            "docs/superpowers/.env.example",
+        )
+        files = iter_package_files(
+            self.root,
+            [".env", ".env.*", "credentials.*", "docs/superpowers/**"],
+        )
+        selected = {path.relative_to(self.root).as_posix() for path in files}
+        self.assertIn(".env.example", selected)
+        self.assertIn("credentials.example.json", selected)
+        self.assertNotIn("docs/superpowers/.env.example", selected)
+
+        (self.root / "credentials.example.pem").write_text("not-a-key", encoding="utf-8")
+        self._git("add", "-f", "credentials.example.pem")
+        with self.assertRaisesRegex(ValueError, "sensitive tracked path"):
+            iter_package_files(self.root, [".env", ".env.*", "credentials.*"])
+
     def test_iter_package_files_rejects_included_symlink(self):
         link = self.root / "linked.txt"
         try:
             os.symlink(self.root / "a.txt", link)
         except (OSError, NotImplementedError) as exc:
             self.skipTest(f"symlink creation unavailable: {exc}")
+        self._git("add", "linked.txt")
 
         with self.assertRaisesRegex(ValueError, "symlink"):
             iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
@@ -64,6 +188,7 @@ class ReleasePackageTests(unittest.TestCase):
         second_sha = build_archive(self.root, second, files)
 
         self.assertEqual(first.read_bytes(), second.read_bytes())
+        self.assertEqual(first.read_bytes(), canonical_zip_bytes(self.root, files))
         self.assertEqual(first_sha, hashlib.sha256(first.read_bytes()).hexdigest())
         self.assertEqual(second_sha, first_sha)
         with zipfile.ZipFile(first) as archive:
@@ -71,7 +196,35 @@ class ReleasePackageTests(unittest.TestCase):
             for info in archive.infolist():
                 self.assertEqual(info.date_time, (1980, 1, 1, 0, 0, 0))
                 self.assertEqual(stat.S_IMODE(info.external_attr >> 16), 0o644)
+                self.assertTrue(stat.S_ISREG(info.external_attr >> 16))
                 self.assertFalse(stat.S_ISLNK(info.external_attr >> 16))
+                self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(info.flag_bits, 0)
+
+    def test_canonical_archive_matches_available_python_312_and_314(self):
+        alternate = shutil.which("python")
+        if not alternate or Path(alternate).resolve() == Path(sys.executable).resolve():
+            self.skipTest("no alternate Python runtime is available")
+        files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
+        expected = self.root / "dist" / "current.zip"
+        build_archive(self.root, expected, files)
+        alternate_output = self.root / "dist" / "alternate.zip"
+        code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(ROOT)!r}); "
+            "from scripts.package_release import iter_package_files, build_archive; "
+            f"root=Path({str(self.root)!r}); output=Path({str(alternate_output)!r}); "
+            "files=iter_package_files(root, ['dist/**', '**/__pycache__/**']); "
+            "print(build_archive(root, output, files))"
+        )
+        completed = subprocess.run(
+            [alternate, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.stdout.strip(), hashlib.sha256(expected.read_bytes()).hexdigest())
+        self.assertEqual(alternate_output.read_bytes(), expected.read_bytes())
 
     def test_compare_archive_detects_missing_unexpected_and_changed_members(self):
         files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
@@ -88,12 +241,77 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertTrue(any("unexpected" in error.lower() for error in errors), errors)
         self.assertTrue(any("changed" in error.lower() for error in errors), errors)
 
+    def test_compare_archive_rejects_noncanonical_order_and_metadata(self):
+        files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
+        archive_path = self.root / "dist" / "corrupt.zip"
+
+        corruptions = {
+            "order": {"reverse": True},
+            "timestamp": {"timestamp": (2026, 1, 1, 0, 0, 0)},
+            "mode": {"mode": stat.S_IFREG | 0o777},
+            "compression": {"compression": zipfile.ZIP_DEFLATED},
+        }
+        for label, options in corruptions.items():
+            with self.subTest(label=label):
+                ordered = sorted(files, key=lambda item: item.relative_to(self.root).as_posix())
+                if options.get("reverse"):
+                    ordered.reverse()
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    for path in ordered:
+                        name = path.relative_to(self.root).as_posix()
+                        info = zipfile.ZipInfo(name, options.get("timestamp", (1980, 1, 1, 0, 0, 0)))
+                        info.create_system = 3
+                        info.compress_type = options.get("compression", zipfile.ZIP_STORED)
+                        info.external_attr = options.get("mode", stat.S_IFREG | 0o644) << 16
+                        archive.writestr(info, path.read_bytes(), compress_type=info.compress_type)
+                errors = compare_archive(self.root, archive_path, files)
+                self.assertTrue(any(label in error.lower() for error in errors), errors)
+
+        build_archive(self.root, archive_path, files)
+        raw = bytearray(archive_path.read_bytes())
+        local = raw.find(b"PK\x03\x04")
+        central = raw.find(b"PK\x01\x02")
+        struct.pack_into("<H", raw, local + 6, 0x0800)
+        struct.pack_into("<H", raw, central + 8, 0x0800)
+        archive_path.write_bytes(raw)
+        self.assertTrue(
+            any("flag" in error.lower() for error in compare_archive(self.root, archive_path, files))
+        )
+
+    def test_compare_archive_rejects_duplicate_members(self):
+        files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
+        archive_path = self.root / "dist" / "duplicate.zip"
+        source = self.root / "a.txt"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                for _ in range(2):
+                    info = zipfile.ZipInfo("a.txt", (1980, 1, 1, 0, 0, 0))
+                    info.create_system = 3
+                    info.create_version = 20
+                    info.extract_version = 20
+                    info.external_attr = (stat.S_IFREG | 0o644) << 16
+                    archive.writestr(info, source.read_bytes())
+        self.assertTrue(
+            any("duplicate" in error.lower() for error in compare_archive(self.root, archive_path, files))
+        )
+
     def test_project_configuration_declares_release_command_and_required_exclusions(self):
         project = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))
         self.assertEqual(project["commands"]["package"], "python scripts/package_release.py")
         exclusions = set(project["packaging"]["excludes"])
         for pattern in {
             ".git/**",
+            ".env",
+            ".env.*",
+            "credentials.*",
+            "*.pem",
+            "*.key",
+            "*.p12",
+            "*.pfx",
+            "node_modules/**",
+            ".venv/**",
+            "venv/**",
             "dist/**",
             ".optimal-challenge/**",
             "docs/superpowers/**",

@@ -7,15 +7,24 @@ Tool-required manifests remain at the repository root or their mandated discover
 ## Deterministic release packaging
 
 Run `python scripts/package_release.py` to build the archive named by
-`paths.package`. The packager selects files using `packaging.excludes`, writes
-members in sorted POSIX-path order with a fixed 1980-01-01 timestamp and
-regular-file `0644` permissions, then reopens the ZIP and compares every
-selected byte with source. It rejects symlinks, missing members, unexpected
-members, duplicate members, unsafe paths, and changed bytes. A successful run
-prints the file count and SHA-256; `dist/` remains ignored and is never staged.
+`paths.package`. The Git index is the allowlist: untracked dirty-tree files are
+never candidates. The packager filters tracked paths using
+`packaging.excludes`, writes them in sorted ASCII POSIX-path order with the
+compression-independent `ZIP_STORED` method, a fixed 1980-01-01 timestamp,
+empty optional metadata, and regular-file `0644` permissions. It then reopens
+the ZIP and compares exact order, metadata, names, and every selected byte with
+source. It rejects symlinks, missing members, unexpected or duplicate members,
+unsafe paths, and changed bytes. A successful run prints the file count and
+SHA-256; `dist/` remains ignored and is never staged.
 
-The exclusion list removes Git and agent-local state, generated archives,
-caches, planning documents, and local/raw evaluation results. Portable,
+The exclusion list removes Git and agent-local state, dependencies, virtual
+environments, generated archives, caches, planning documents, local/raw
+evaluation results, `.env` variants, `credentials.*`, and private/certificate
+key formats. A tracked sensitive path fails packaging instead of disappearing
+silently. The only sensitive-name exceptions are exactly `.env.example` and
+`credentials.example.*`; these documented placeholders remain eligible when
+tracked, but never override excluded directories or a key-file suffix.
+Portable,
 Codex, and Claude manifests; runtime skills and templates; committed schemas
 and defaults; public documentation/legal/support files; validators; sanitized
 evaluation fixtures; and distributable validation tests remain in the archive.

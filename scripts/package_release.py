@@ -7,8 +7,10 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import zipfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
@@ -17,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CONFIG = ROOT / "config" / "project.json"
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 FIXED_FILE_MODE = stat.S_IFREG | 0o644
+CANONICAL_CREATE_SYSTEM = 3
+CANONICAL_ZIP_VERSION = 20
+CANONICAL_FLAG_BITS = 0
+SENSITIVE_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx"})
+SAFE_EXAMPLE_EXCLUDE_PATTERNS = frozenset({".env.*", "credentials.*"})
 
 
 def _relative_posix(root: Path, path: Path) -> str:
@@ -29,11 +36,17 @@ def _relative_posix(root: Path, path: Path) -> str:
     return relative.as_posix()
 
 
-def _matches_exclude(relative: str, excludes: Sequence[str]) -> bool:
+def _matches_exclude(
+    relative: str,
+    excludes: Sequence[str],
+    ignored_patterns: frozenset[str] = frozenset(),
+) -> bool:
     path = PurePosixPath(relative)
     for pattern in excludes:
         normalized = pattern.replace("\\", "/").strip("/")
         if not normalized:
+            continue
+        if normalized in ignored_patterns:
             continue
         if path.match(normalized):
             return True
@@ -43,34 +56,75 @@ def _matches_exclude(relative: str, excludes: Sequence[str]) -> bool:
     return False
 
 
+def _is_safe_example(relative: str) -> bool:
+    name = PurePosixPath(relative).name.lower()
+    return name == ".env.example" or name.startswith("credentials.example.")
+
+
+def _is_sensitive_path(relative: str) -> bool:
+    name = PurePosixPath(relative).name.lower()
+    return (
+        name == ".env"
+        or name.startswith(".env.")
+        or name.startswith("credentials.")
+        or PurePosixPath(name).suffix in SENSITIVE_SUFFIXES
+    )
+
+
+def _has_sensitive_suffix(relative: str) -> bool:
+    return PurePosixPath(relative).suffix.lower() in SENSITIVE_SUFFIXES
+
+
+def _validate_tracked_name(relative: str) -> PurePosixPath:
+    pure = PurePosixPath(relative)
+    if (
+        not relative
+        or not relative.isascii()
+        or any(ord(character) < 32 or ord(character) == 127 for character in relative)
+        or "\\" in relative
+        or pure.is_absolute()
+        or ".." in pure.parts
+        or pure.as_posix() != relative
+    ):
+        raise ValueError(f"unsafe or non-canonical tracked path: {relative!r}")
+    return pure
+
+
 def iter_package_files(root: Path, excludes: Sequence[str]) -> list[Path]:
-    """Return the selected regular files in stable POSIX-path order."""
+    """Return selected Git-tracked files in stable POSIX-path order."""
 
     root = root.resolve()
-    selected: list[Path] = []
-    for current, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
-        current_path = Path(current)
-        kept_dirs: list[str] = []
-        for dirname in dirnames:
-            candidate = current_path / dirname
-            relative = _relative_posix(root, candidate)
-            if _matches_exclude(relative, excludes):
-                continue
-            if candidate.is_symlink():
-                raise ValueError(f"symlink is not allowed in release package: {relative}")
-            kept_dirs.append(dirname)
-        dirnames[:] = kept_dirs
+    completed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--cached"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"cannot enumerate Git-tracked package files: {detail or 'git ls-files failed'}")
+    try:
+        names = completed.stdout.decode("utf-8").split("\0")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Git-tracked package paths must be UTF-8 ASCII-compatible") from exc
 
-        for filename in filenames:
-            candidate = current_path / filename
-            relative = _relative_posix(root, candidate)
-            if _matches_exclude(relative, excludes):
-                continue
-            if candidate.is_symlink():
-                raise ValueError(f"symlink is not allowed in release package: {relative}")
-            if not candidate.is_file():
-                raise ValueError(f"non-regular file is not allowed in release package: {relative}")
-            selected.append(candidate)
+    selected: list[Path] = []
+    for relative in names:
+        if not relative:
+            continue
+        pure = _validate_tracked_name(relative)
+        safe_example = _is_safe_example(relative)
+        if _is_sensitive_path(relative) and (not safe_example or _has_sensitive_suffix(relative)):
+            raise ValueError(f"sensitive tracked path is forbidden in release package: {relative}")
+        ignored_patterns = SAFE_EXAMPLE_EXCLUDE_PATTERNS if safe_example else frozenset()
+        if _matches_exclude(relative, excludes, ignored_patterns):
+            continue
+        candidate = root.joinpath(*pure.parts)
+        if candidate.is_symlink():
+            raise ValueError(f"symlink is not allowed in release package: {relative}")
+        if not candidate.is_file():
+            raise ValueError(f"tracked package member is missing or non-regular: {relative}")
+        selected.append(candidate)
 
     return sorted(selected, key=lambda path: _relative_posix(root, path))
 
@@ -100,17 +154,22 @@ def build_archive(root: Path, output: Path, files: Sequence[Path]) -> str:
         with zipfile.ZipFile(
             temporary,
             mode="w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=9,
+            compression=zipfile.ZIP_STORED,
+            allowZip64=False,
             strict_timestamps=True,
         ) as archive:
             for relative, path in ordered:
                 info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
-                info.create_system = 3
-                info.compress_type = zipfile.ZIP_DEFLATED
+                info.create_system = CANONICAL_CREATE_SYSTEM
+                info.create_version = CANONICAL_ZIP_VERSION
+                info.extract_version = CANONICAL_ZIP_VERSION
+                info.compress_type = zipfile.ZIP_STORED
                 info.external_attr = FIXED_FILE_MODE << 16
-                info.flag_bits |= 0x800
-                archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+                info.internal_attr = 0
+                info.flag_bits = CANONICAL_FLAG_BITS
+                info.extra = b""
+                info.comment = b""
+                archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_STORED)
         os.replace(temporary, output)
     finally:
         if temporary.exists():
@@ -124,14 +183,18 @@ def compare_archive(root: Path, archive: Path, files: Sequence[Path]) -> list[st
 
     root = root.resolve()
     expected = {_relative_posix(root, Path(path)): Path(path) for path in files}
+    expected_names = sorted(expected)
     errors: list[str] = []
     try:
         with zipfile.ZipFile(archive) as package:
             infos = package.infolist()
             names = [info.filename for info in infos]
-            duplicates = sorted({name for name in names if names.count(name) > 1})
+            duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
             if duplicates:
                 errors.append(f"duplicate archive members: {duplicates}")
+
+            if names != expected_names:
+                errors.append(f"archive member order is not canonical: expected {expected_names}, found {names}")
 
             actual = set(names)
             missing = sorted(set(expected) - actual)
@@ -144,15 +207,35 @@ def compare_archive(root: Path, archive: Path, files: Sequence[Path]) -> list[st
             for info in infos:
                 name = info.filename
                 pure = PurePosixPath(name)
-                if pure.is_absolute() or ".." in pure.parts or name.endswith("/"):
+                if (
+                    not name.isascii()
+                    or "\\" in name
+                    or pure.is_absolute()
+                    or ".." in pure.parts
+                    or name.endswith("/")
+                    or pure.as_posix() != name
+                ):
                     errors.append(f"unsafe archive member: {name}")
                     continue
                 mode = info.external_attr >> 16
-                if stat.S_ISLNK(mode):
-                    errors.append(f"symlink archive member: {name}")
-                    continue
+                if info.date_time != FIXED_ZIP_TIME:
+                    errors.append(f"archive timestamp is not canonical for {name}: {info.date_time}")
+                if mode != FIXED_FILE_MODE:
+                    errors.append(f"archive mode/type is not canonical for {name}: {oct(mode)}")
+                if info.compress_type != zipfile.ZIP_STORED:
+                    errors.append(f"archive compression is not canonical for {name}: {info.compress_type}")
+                if info.flag_bits != CANONICAL_FLAG_BITS:
+                    errors.append(f"archive name flag bits are not canonical for {name}: {info.flag_bits}")
+                if info.create_system != CANONICAL_CREATE_SYSTEM:
+                    errors.append(f"archive creator system is not canonical for {name}: {info.create_system}")
+                if info.create_version != CANONICAL_ZIP_VERSION or info.extract_version != CANONICAL_ZIP_VERSION:
+                    errors.append(f"archive ZIP version is not canonical for {name}")
+                if info.extra or info.comment:
+                    errors.append(f"archive extra/comment metadata is not canonical for {name}")
                 if name in expected and package.read(info) != expected[name].read_bytes():
                     errors.append(f"changed archive member: {name}")
+            if package.comment:
+                errors.append("archive comment is not canonical")
     except (OSError, zipfile.BadZipFile) as exc:
         errors.append(f"cannot read archive: {exc}")
     return errors
