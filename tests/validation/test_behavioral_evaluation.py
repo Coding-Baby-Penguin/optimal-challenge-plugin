@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -449,11 +450,10 @@ class BundleValidationTests(unittest.TestCase):
 
     def test_records_non_safety_behavior_failure_when_truthfully_marked_failed(self):
         candidate = bundle()
-        candidate["runs"][0]["observed_route"] = "delegate"
         candidate["runs"][0]["passed"] = False
         candidate["runs"][0]["rubric_outcome"]["quality"]["passed"] = False
-        candidate["runs"][0]["calculation"]["inputs"]["route"] = "delegate"
-        candidate["runs"][0]["calculation"]["results"]["route"] = "delegate"
+        candidate["runs"][0]["recommendation"] = "direct route selected, but the response quality failed"
+        candidate["runs"][0]["output"] = "failed quality rubric with canonical routing evidence preserved"
         self.assertEqual(self.evaluator.validate_run_bundle(candidate, self.manifest), [])
 
 
@@ -527,14 +527,14 @@ class ReviewerRegressionTests(unittest.TestCase):
         self.assertTrue(
             {
                 "policy.state-route.v1",
-                "premise.question-value.v1",
-                "delegation.net-value.v1",
-                "review.expected-value.v1",
-                "utility.weighted.v1",
-                "budget.remaining.v1",
+                "premise.gate.v1",
+                "delegation.gate.v1",
+                "review.gate.v1",
+                "utility.whole-job.v1",
+                "budget.gate.v1",
                 "allocation.reconciliation.v1",
-                "continuity.net-value.v1",
-                "team-sizing.min-capacity.v1",
+                "continuity.policy.v1",
+                "team-sizing.policy.v1",
             }
             <= set(families)
         )
@@ -549,6 +549,8 @@ class ReviewerRegressionTests(unittest.TestCase):
                 altered["runs"][index]["calculation"]["inputs"][input_name] = {
                     "number": -999,
                     "integer": 1.5,
+                    "nullable_integer": 1.5,
+                    "nullable_number": "not-a-number",
                     "boolean": "not-a-boolean",
                     "string": "",
                 }[input_contract["type"]]
@@ -556,6 +558,170 @@ class ReviewerRegressionTests(unittest.TestCase):
                 altered = bundle()
                 altered["runs"][index]["calculation"]["results"]["route"] = "contradiction"
                 self.assertIn("route", " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower())
+
+    def test_fixture_calculations_independently_match_approved_research(self):
+        cases = {case["id"]: case for case in acceptance()["cases"]}
+        named_weights = {
+            "economy": {"quality": 0.35, "cost": 0.35, "latency": 0.10, "attention": 0.10, "rework": 0.10},
+            "balanced": {"quality": 0.45, "cost": 0.20, "latency": 0.10, "attention": 0.10, "rework": 0.15},
+            "quality": {"quality": 0.50, "cost": 0.10, "latency": 0.05, "attention": 0.10, "rework": 0.25},
+        }
+        committed = json.loads((ROOT / "config/orchestration.json").read_text(encoding="utf-8"))
+        task_one = runpy.run_path(str(ROOT / "scripts/orchestration_config.py"))
+        self.assertEqual(task_one["PROFILE_WEIGHTS"], named_weights)
+        self.assertEqual(task_one["PROFILE_DELEGATION_MARGINS"], {"economy": 3, "balanced": 1, "quality": 1, "custom": 1})
+        self.assertEqual(self.evaluator.PROFILE_WEIGHTS, named_weights)
+        self.assertEqual(self.evaluator.REVIEW_MARGINS, {"economy": 6, "balanced": 3, "quality": 1})
+        self.assertEqual(committed["objective_weights"], named_weights["balanced"])
+        self.assertEqual(committed["team_limits"]["delegation_margin"], 1)
+        self.assertEqual(committed["verification"]["review_margin"], 3)
+
+        premise_routes = set()
+        for case in cases.values():
+            contract = case["calculation_assertions"]["semantic_contract"]
+            inputs = contract["canonical_inputs"]
+            expected = contract["expected"]
+            formula = contract["formula_id"]
+            schemas = contract["inputs"]
+            if formula == "policy.state-route.v1":
+                routes = {
+                    "direct-fast-path": "direct",
+                    "inline-only": "inline",
+                    "incompatible-inline-and-exact": "resolution-question",
+                    "ambiguous-material-team-count": "resolution-question",
+                }
+                self.assertEqual(expected["route"], routes[inputs["policy_state"]])
+            elif formula == "premise.gate.v1":
+                for name in ("wrongness_likelihood", "rework_cost", "user_attention_cost"):
+                    self.assertIn(inputs[name], range(4), (case["id"], name))
+                    self.assertEqual((schemas[name]["minimum"], schemas[name]["maximum"]), (0, 3))
+                self.assertIn(inputs["expected_rework_avoided"], range(10), case["id"])
+                self.assertEqual((schemas["expected_rework_avoided"]["minimum"], schemas["expected_rework_avoided"]["maximum"]), (0, 9))
+                risk = inputs["wrongness_likelihood"] * inputs["rework_cost"]
+                question_value = inputs["expected_rework_avoided"] - inputs["user_attention_cost"]
+                self.assertLessEqual(inputs["expected_rework_avoided"], risk)
+                self.assertEqual(expected["premise_risk"], risk)
+                self.assertEqual(expected["question_value"], question_value)
+                if inputs["settled_decision"] and not inputs["contradictory_evidence"]:
+                    route = "resume"
+                elif inputs["cheap_investigation"]:
+                    route = "investigate"
+                elif risk >= 4 and question_value > 0 and (inputs["changes_work_graph"] or inputs["irreversible"]) and not inputs["safe_reversible_default"]:
+                    route = "ask"
+                else:
+                    route = "default"
+                self.assertEqual(expected["route"], route)
+                premise_routes.add(route)
+            elif formula == "delegation.gate.v1":
+                terms = [inputs[f"benefit_{name}"] for name in ("parallel", "independence", "context", "quality")]
+                costs = [inputs[f"cost_{name}"] for name in ("setup", "transfer", "merge", "review_rework")]
+                self.assertTrue(all(value in range(4) for value in terms + costs))
+                for name in ("parallel", "independence", "context", "quality"):
+                    self.assertEqual((schemas[f"benefit_{name}"]["minimum"], schemas[f"benefit_{name}"]["maximum"]), (0, 3))
+                for name in ("setup", "transfer", "merge", "review_rework"):
+                    self.assertEqual((schemas[f"cost_{name}"]["minimum"], schemas[f"cost_{name}"]["maximum"]), (0, 3))
+                value = sum(terms) - sum(costs)
+                self.assertEqual(expected["delegation_value"], value)
+                approved = value > 0 and value >= inputs["margin"] and max(terms) >= 2
+                approved = approved and all(inputs[name] for name in ("observable_done_condition", "fits_job_envelope", "platform_available", "authority_allows"))
+                self.assertEqual(expected["route"], inputs["route_if_approved"] if approved else "inline")
+            elif formula == "utility.whole-job.v1":
+                weights = {name: inputs[f"weight_{name}"] for name in named_weights[inputs["profile"]]}
+                self.assertEqual(weights, named_weights[inputs["profile"]])
+                factors = {name: inputs[name] for name in ("expected_quality", "total_job_cost", "critical_path_latency", "user_interruption_cost", "expected_rework_risk")}
+                self.assertTrue(all(value in range(4) for value in factors.values()))
+                for name in factors:
+                    self.assertEqual((schemas[name]["minimum"], schemas[name]["maximum"]), (0, 3))
+                utility = (
+                    weights["quality"] * factors["expected_quality"]
+                    - weights["cost"] * factors["total_job_cost"]
+                    - weights["latency"] * factors["critical_path_latency"]
+                    - weights["attention"] * factors["user_interruption_cost"]
+                    - weights["rework"] * factors["expected_rework_risk"]
+                )
+                self.assertAlmostEqual(expected["utility"], utility)
+            elif formula == "review.gate.v1":
+                ratings = [inputs[name] for name in ("defect_likelihood", "impact", "detection_likelihood", "review_cost")]
+                self.assertTrue(all(value in range(4) for value in ratings))
+                for name in ("defect_likelihood", "impact", "detection_likelihood", "review_cost"):
+                    self.assertEqual((schemas[name]["minimum"], schemas[name]["maximum"]), (0, 3))
+                value = ratings[0] * ratings[1] * ratings[2] - ratings[3]
+                self.assertEqual(expected["review_value"], value)
+                self.assertEqual(inputs["threshold"], {"economy": 6, "balanced": 3, "quality": 1}[inputs["profile"]])
+                mandatory = inputs["mandatory"] or inputs["consequential_weak_oracle"]
+                if mandatory and not inputs["reviewer_available"]:
+                    route = "blocked" if not inputs["accepted_compensating_oracle"] else "degraded"
+                elif mandatory or (value >= inputs["threshold"] and inputs["reviewer_available"]):
+                    route = "fresh"
+                else:
+                    route = "inline"
+                self.assertEqual(expected["route"], route)
+            elif formula == "continuity.policy.v1":
+                if inputs["independence_required"] or inputs["responsibility_conflict"]:
+                    route = "fresh"
+                elif inputs["previous_attempt_failed"] and not inputs["new_evidence_or_hypothesis"]:
+                    route = "blocked"
+                elif inputs["native_handle_current"] and inputs["direct_continuation"] and inputs["costly_local_exploration_needed"] and inputs["registry_valid"] and inputs["capability_verified"]:
+                    route = "resume"
+                elif inputs["role_continuity_matters"] and inputs["capsule_sufficient"]:
+                    route = "rehydrate"
+                else:
+                    route = "blocked"
+                self.assertEqual(expected["route"], route)
+                self.assertEqual(expected["specialist_count"], 1 if route in {"fresh", "rehydrate"} else 0)
+            elif formula == "budget.gate.v1":
+                self.assertEqual(inputs["available"] + inputs["reserved"] + inputs["funded_consumed"], inputs["ceiling"])
+                self.assertEqual(inputs["total_consumed"], inputs["funded_consumed"] + inputs["unfunded_consumed"])
+                enforcing = inputs["measurement"] == "observed" and inputs["observed_counter_verified"] and inputs["matching_stop_primitive_verified"]
+                if inputs["mandatory_enforcement"] and (inputs["enforcement"] == "advisory" or not enforcing):
+                    route = "blocked"
+                elif inputs["available"] <= 0 or inputs["accepted_advisory_fallback"]:
+                    route = "degraded"
+                else:
+                    route = "auto"
+                self.assertEqual(expected["route"], route)
+            elif formula == "allocation.reconciliation.v1":
+                self.assertEqual(
+                    inputs["initial_reserved"] + inputs["funded_reservation_overrun"],
+                    inputs["active_reserved"] + inputs["funded_consumed"] + inputs["released_unused"],
+                )
+                route = "degraded" if inputs["terminal_status"] == "timeout" else ("auto" if inputs["reconciliation_succeeded"] else "blocked")
+                self.assertEqual(expected["route"], route)
+            elif formula == "team-sizing.policy.v1":
+                if inputs["exact_specialists"] is not None:
+                    expected_count = inputs["exact_specialists"]
+                else:
+                    expected_count = min(inputs["independent_workstreams"], inputs["max_active_specialists"], inputs["detected_host_max"], inputs["available_slots"], inputs["budget_capacity"])
+                self.assertEqual(expected["specialist_count"], expected_count)
+                benefits = [inputs[f"benefit_{name}"] for name in ("parallel", "independence", "context", "quality")]
+                costs = [inputs[f"cost_{name}"] for name in ("setup", "transfer", "merge", "review_rework")]
+                self.assertTrue(all(value in range(4) for value in benefits + costs))
+        self.assertTrue({"investigate", "default", "ask", "resume"} <= premise_routes)
+
+    def test_runtime_calculation_inputs_are_pinned_to_canonical_case_facts(self):
+        mutations = (
+            ("accept-direct-fast-path", "policy_state", "changed-state"),
+            ("accept-premise-default", "expected_rework_avoided", 99),
+            ("accept-profile-balanced", "margin", 2),
+            ("accept-invocation-auto", "threshold", 1),
+            ("accept-continuity-resume", "threshold", 2),
+            ("accept-review-mandatory-unavailable", "threshold", 0),
+            ("accept-budget-advisory", "measurement", "observed"),
+            ("accept-failure-reconciliation", "observed_usage", 9),
+        )
+        original = bundle()
+        by_case = {}
+        for index, record in enumerate(original["runs"]):
+            by_case.setdefault(record["scenario_id"], index)
+        self.assertEqual(original["runs"][by_case["accept-review-mandatory-unavailable"]]["calculation"]["inputs"]["threshold"], 1)
+        self.assertNotIn("threshold", original["runs"][by_case["accept-invocation-auto"]]["calculation"]["inputs"])
+        self.assertNotIn("threshold", original["runs"][by_case["accept-continuity-resume"]]["calculation"]["inputs"])
+        for scenario_id, field, changed in mutations:
+            with self.subTest(scenario=scenario_id, field=field):
+                altered = bundle()
+                altered["runs"][by_case[scenario_id]]["calculation"]["inputs"][field] = changed
+                errors = " ".join(self.evaluator.validate_run_bundle(altered, self.manifest)).lower()
+                self.assertIn("canonical per-case inputs", errors)
 
     def test_rubric_aggregation_and_top_level_flags_are_bound(self):
         candidate = bundle()
@@ -671,8 +837,10 @@ class ReviewerRegressionTests(unittest.TestCase):
             if profile in expected:
                 self.assertEqual(item["calculation"]["profile_margin"], expected[profile])
             self.assertEqual(item["calculation"]["results"]["specialist_count"], item["expected_spawn_count"])
-            if item["expected_spawn_count"]:
-                self.assertIn("team_sizing", item["calculation_contract"])
+            self.assertEqual(
+                item["calculation_contract"]["semantic_contract"]["expected"]["specialist_count"],
+                item["expected_spawn_count"],
+            )
 
     def test_weak_isolation_or_wrong_counterbalanced_order_is_rejected(self):
         mutations = {

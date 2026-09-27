@@ -64,6 +64,12 @@ KNOWN_SURFACES = frozenset({
     "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
 })
 PROFILE_MARGINS = {"economy": 3, "balanced": 1, "quality": 1}
+PROFILE_WEIGHTS = {
+    "economy": {"quality": 0.35, "cost": 0.35, "latency": 0.10, "attention": 0.10, "rework": 0.10},
+    "balanced": {"quality": 0.45, "cost": 0.20, "latency": 0.10, "attention": 0.10, "rework": 0.15},
+    "quality": {"quality": 0.50, "cost": 0.10, "latency": 0.05, "attention": 0.10, "rework": 0.25},
+}
+REVIEW_MARGINS = {"economy": 6, "balanced": 3, "quality": 1}
 RUBRIC_DIMENSIONS = frozenset({
     "quality", "safety_authority", "budget_truthfulness", "failure_visibility"
 })
@@ -407,6 +413,16 @@ def _semantic_inputs(
                 errors.append(f"{path} input {field} must be an integer")
             elif item < int(schema.get("minimum", 0)) or item > int(schema.get("maximum", 100)):
                 errors.append(f"{path} input {field} is outside the canonical integer range")
+        elif kind == "nullable_integer":
+            if item is not None and (not isinstance(item, int) or isinstance(item, bool)):
+                errors.append(f"{path} input {field} must be null or an integer")
+            elif item is not None and (item < int(schema.get("minimum", 0)) or item > int(schema.get("maximum", 100))):
+                errors.append(f"{path} input {field} is outside the canonical integer range")
+        elif kind == "nullable_number":
+            if item is not None and not _is_number(item):
+                errors.append(f"{path} input {field} must be null or a finite number")
+            elif item is not None and (float(item) < float(schema.get("minimum", -math.inf)) or float(item) > float(schema.get("maximum", math.inf))):
+                errors.append(f"{path} input {field} is outside the canonical range")
         elif kind == "boolean":
             if not isinstance(item, bool):
                 errors.append(f"{path} input {field} must be boolean")
@@ -423,64 +439,126 @@ def _semantic_inputs(
 def _compute_semantic_result(formula_id: str, inputs: Mapping[str, Any]) -> dict[str, Any] | None:
     specialists = int(inputs.get("specialist_count", 0))
     if formula_id == "policy.state-route.v1":
-        return {"route": inputs.get("route"), "specialist_count": specialists}
-    if formula_id == "premise.question-value.v1":
-        score = float(inputs["wrongness_likelihood"]) * float(inputs["rework_cost"]) - float(inputs["user_attention_cost"])
-        route = inputs["route_if_positive"] if score >= float(inputs["threshold"]) else inputs["route_if_nonpositive"]
-        return {"score": score, "route": route, "specialist_count": specialists}
-    if formula_id == "delegation.net-value.v1":
-        score = float(inputs["benefits"]) - float(inputs["costs"])
-        route = inputs["route_if_approved"] if score >= float(inputs["margin"]) else inputs["route_if_rejected"]
-        return {"score": score, "route": route, "specialist_count": specialists}
-    if formula_id == "utility.weighted.v1":
-        if not math.isclose(
-            float(inputs["quality_weight"]) + float(inputs["cost_weight"]) + float(inputs["speed_weight"]),
-            1.0, rel_tol=0.0, abs_tol=1e-9,
+        routes = {
+            "direct-fast-path": "direct",
+            "inline-only": "inline",
+            "incompatible-inline-and-exact": "resolution-question",
+            "ambiguous-material-team-count": "resolution-question",
+        }
+        route = routes.get(str(inputs.get("policy_state")))
+        return {"route": route, "specialist_count": specialists} if route else None
+    if formula_id == "premise.gate.v1":
+        premise_risk = int(inputs["wrongness_likelihood"]) * int(inputs["rework_cost"])
+        avoided = int(inputs["expected_rework_avoided"])
+        if avoided > premise_risk:
+            return None
+        question_value = avoided - int(inputs["user_attention_cost"])
+        if inputs["settled_decision"] and not inputs["contradictory_evidence"]:
+            route = "resume"
+        elif inputs["cheap_investigation"]:
+            route = "investigate"
+        elif (
+            premise_risk >= int(inputs["premise_risk_threshold"])
+            and question_value > int(inputs["question_value_threshold"])
+            and (inputs["changes_work_graph"] or inputs["irreversible"])
+            and not inputs["safe_reversible_default"]
         ):
+            route = "ask"
+        else:
+            route = "default"
+        return {"premise_risk": premise_risk, "question_value": question_value, "route": route, "specialist_count": specialists}
+    if formula_id == "delegation.gate.v1":
+        benefits = [int(inputs[f"benefit_{name}"]) for name in ("parallel", "independence", "context", "quality")]
+        costs = [int(inputs[f"cost_{name}"]) for name in ("setup", "transfer", "merge", "review_rework")]
+        value = sum(benefits) - sum(costs)
+        approved = (
+            inputs["mode"] != "inline-only" and value > 0 and value >= int(inputs["margin"])
+            and max(benefits) >= 2 and inputs["observable_done_condition"]
+            and inputs["fits_job_envelope"] and inputs["platform_available"] and inputs["authority_allows"]
+        )
+        route = inputs["route_if_approved"] if approved else "inline"
+        return {"delegation_value": value, "route": route, "specialist_count": specialists}
+    if formula_id == "utility.whole-job.v1":
+        weights = {name: float(inputs[f"weight_{name}"]) for name in ("quality", "cost", "latency", "attention", "rework")}
+        if weights != PROFILE_WEIGHTS.get(inputs["profile"]) or inputs["utility_tie_policy"] != "inline-unless-independence-mandatory":
             return None
         score = (
-            float(inputs["quality"]) * float(inputs["quality_weight"])
-            - float(inputs["cost"]) * float(inputs["cost_weight"])
-            + float(inputs["speed"]) * float(inputs["speed_weight"])
+            weights["quality"] * int(inputs["expected_quality"])
+            - weights["cost"] * int(inputs["total_job_cost"])
+            - weights["latency"] * int(inputs["critical_path_latency"])
+            - weights["attention"] * int(inputs["user_interruption_cost"])
+            - weights["rework"] * int(inputs["expected_rework_risk"])
         )
-        route = inputs["route_if_approved"] if score >= float(inputs["threshold"]) else inputs["route_if_rejected"]
-        return {"score": score, "route": route, "specialist_count": specialists}
-    if formula_id == "continuity.net-value.v1":
-        score = float(inputs["continuity_value"]) - float(inputs["context_baggage"])
-        route = inputs["route_if_positive"] if score >= float(inputs["threshold"]) else inputs["route_if_nonpositive"]
-        return {"score": score, "route": route, "specialist_count": specialists}
-    if formula_id == "review.expected-value.v1":
-        score = (
-            float(inputs["defect_likelihood"]) * float(inputs["impact"]) * float(inputs["detection_likelihood"])
-            - float(inputs["review_cost"])
-        )
-        if inputs["mandatory"] and not inputs["reviewer_available"]:
+        route = inputs["selected_route"] if inputs["mandatory_gates_passed"] else "blocked"
+        return {"utility": score, "route": route, "specialist_count": specialists}
+    if formula_id == "continuity.policy.v1":
+        if inputs["independence_required"] or inputs["responsibility_conflict"]:
+            route = "fresh"
+        elif inputs["previous_attempt_failed"] and not inputs["new_evidence_or_hypothesis"]:
             route = "blocked"
+        elif (
+            inputs["native_handle_current"] and inputs["direct_continuation"]
+            and inputs["costly_local_exploration_needed"] and inputs["registry_valid"]
+            and inputs["capability_verified"]
+        ):
+            route = "resume"
+        elif inputs["role_continuity_matters"] and inputs["capsule_sufficient"]:
+            route = "rehydrate"
         else:
-            route = inputs["route_if_approved"] if score >= float(inputs["threshold"]) else inputs["route_if_rejected"]
-        return {"score": score, "route": route, "specialist_count": specialists}
-    if formula_id == "budget.remaining.v1":
-        remaining = float(inputs["available"]) - float(inputs["reserved"]) - float(inputs["consumed"])
-        if inputs["enforcement"] == "provider-enforced" and not inputs["capability_verified"]:
             route = "blocked"
-        elif remaining <= 0 or inputs["accepted_fallback"]:
+        return {"route": route, "specialist_count": 1 if route in {"fresh", "rehydrate"} else 0}
+    if formula_id == "review.gate.v1":
+        product = int(inputs["defect_likelihood"]) * int(inputs["impact"]) * int(inputs["detection_likelihood"])
+        value = product - int(inputs["review_cost"])
+        approved_threshold = REVIEW_MARGINS.get(inputs["profile"])
+        if approved_threshold != inputs["threshold"]:
+            return None
+        mandatory = inputs["mandatory"] or inputs["consequential_weak_oracle"]
+        if mandatory and not inputs["reviewer_available"]:
+            route = "blocked" if not inputs["accepted_compensating_oracle"] else "degraded"
+        elif mandatory or (value >= approved_threshold and inputs["reviewer_available"]):
+            route = "fresh"
+        else:
+            route = "inline"
+        return {"review_product": product, "review_value": value, "route": route, "specialist_count": specialists}
+    if formula_id == "budget.gate.v1":
+        if not math.isclose(float(inputs["available"]) + float(inputs["reserved"]) + float(inputs["funded_consumed"]), float(inputs["ceiling"]), abs_tol=1e-9):
+            return None
+        if not math.isclose(float(inputs["total_consumed"]), float(inputs["funded_consumed"]) + float(inputs["unfunded_consumed"]), abs_tol=1e-9):
+            return None
+        enforcement_capable = (
+            inputs["measurement"] == "observed" and inputs["observed_counter_verified"]
+            and inputs["matching_stop_primitive_verified"]
+        )
+        if inputs["mandatory_enforcement"] and (inputs["enforcement"] == "advisory" or not enforcement_capable):
+            route = "blocked"
+        elif float(inputs["available"]) <= 0 or inputs["accepted_advisory_fallback"]:
             route = "degraded"
         else:
             route = "auto"
-        return {"remaining": remaining, "route": route, "specialist_count": specialists}
+        return {"remaining": float(inputs["available"]), "route": route, "specialist_count": specialists}
     if formula_id == "allocation.reconciliation.v1":
-        remaining = max(0.0, float(inputs["reserved"]) - float(inputs["observed_usage"]))
-        route = "degraded" if inputs["reconciled"] and inputs["terminal_status"] == "timeout" else "blocked"
-        return {"remaining": remaining, "route": route, "specialist_count": specialists}
-    if formula_id == "team-sizing.min-capacity.v1":
-        capacity_names = (
-            "independent_workstreams", "requested_specialists", "required_rehydrations",
-            "required_reviewers", "required_retries", "effective_max", "budget_capacity", "retry_limit",
-        )
-        capacities = [int(inputs[name]) for name in capacity_names if name in inputs]
-        if not capacities:
+        if not math.isclose(
+            float(inputs["initial_reserved"]) + float(inputs["funded_reservation_overrun"]),
+            float(inputs["active_reserved"]) + float(inputs["funded_consumed"]) + float(inputs["released_unused"]),
+            abs_tol=1e-9,
+        ):
             return None
-        return {"route": inputs.get("route"), "specialist_count": min(capacities)}
+        route = "degraded" if inputs["terminal_status"] == "timeout" else ("auto" if inputs["reconciliation_succeeded"] else "blocked")
+        return {"active_reserved": inputs["active_reserved"], "funded_consumed": inputs["funded_consumed"], "released_unused": inputs["released_unused"], "route": route, "specialist_count": specialists}
+    if formula_id == "team-sizing.policy.v1":
+        gates = all(inputs[name] for name in ("authority_allows", "platform_available", "fits_job_envelope", "observable_done_condition"))
+        exact = inputs["exact_specialists"]
+        effective_host_max = min(32, int(inputs["detected_host_max"]))
+        if exact is not None:
+            fits = gates and exact <= effective_host_max and exact <= int(inputs["available_slots"]) and exact <= int(inputs["budget_capacity"])
+            return {"route": "exact-specialists" if fits else "resolution-question", "specialist_count": int(exact) if fits else 0}
+        benefits = [int(inputs[f"benefit_{name}"]) for name in ("parallel", "independence", "context", "quality")]
+        costs = [int(inputs[f"cost_{name}"]) for name in ("setup", "transfer", "merge", "review_rework")]
+        value = sum(benefits) - sum(costs)
+        count = min(int(inputs["independent_workstreams"]), int(inputs["max_active_specialists"]), effective_host_max, int(inputs["available_slots"]), int(inputs["budget_capacity"]))
+        approved = gates and value > 0 and value >= int(inputs["delegation_margin"]) and max(benefits) >= 2 and count > 0
+        return {"route": "team-requested" if approved else "inline", "specialist_count": count if approved else 0}
     return None
 
 
@@ -530,6 +608,8 @@ def _validate_calculation(
         if canonical_computed is None or expected is None or not _semantic_equal(canonical_computed, expected):
             errors.append(f"{path} canonical formula does not recompute the expected result")
         checked_inputs = _semantic_inputs(calculation.get("inputs"), semantic, f"{path} calculation", errors)
+        if calculation.get("inputs") != semantic.get("canonical_inputs"):
+            errors.append(f"{path} calculation inputs must exactly match canonical per-case inputs")
         computed = _compute_semantic_result(str(formula_id), checked_inputs or {}) if checked_inputs is not None else None
         if results is None or computed is None or not _semantic_equal(results, computed):
             errors.append(f"{path} calculation route/result contradicts recomputed formula result")
@@ -541,19 +621,9 @@ def _validate_calculation(
     if "provenance" in contract and calculation.get("provenance") != contract.get("provenance"):
         errors.append(f"{path} calculation provenance differs from contract")
     expected_spawn = case.get("expected_spawn_count")
-    sizing = _mapping(contract.get("team_sizing"))
-    if expected_spawn and sizing is None:
-        errors.append(f"{path} calculation contract requires team sizing for nonzero specialist count")
-    if sizing is not None:
-        if sizing.get("expected_specialists") != expected_spawn or (semantic or {}).get("formula_id") != "team-sizing.min-capacity.v1":
-            errors.append(f"{path} team sizing formula ID or expected specialist count differs from contract")
-        numeric_items = [(key, value) for key, value in sizing.items() if key not in {"formula", "expected_specialists"}]
-        if not numeric_items or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for _, value in numeric_items):
-            errors.append(f"{path} team sizing inputs must be non-negative integers")
-        elif min(value for _, value in numeric_items) != expected_spawn:
-            errors.append(f"{path} team sizing calculation does not derive expected specialist count")
-        if inputs is not None and any(inputs.get(key) != value for key, value in numeric_items):
-            errors.append(f"{path} calculation inputs differ from team sizing contract")
+    if semantic is not None and _mapping(semantic.get("expected")) is not None:
+        if semantic["expected"].get("specialist_count") != expected_spawn:
+            errors.append(f"{path} semantic specialist count differs from acceptance contract")
     if results is not None and results.get("specialist_count") != expected_spawn:
         errors.append(f"{path} calculation specialist count does not match acceptance contract")
     config = _mapping(case.get("config")) or {}
