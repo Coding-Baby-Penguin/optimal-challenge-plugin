@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unittest
@@ -12,33 +13,86 @@ ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "optimal-challenge"
 REFERENCES = SKILL / "references"
 TEMPLATES = SKILL / "templates"
-
-CHECKPOINT_BYPASS = re.compile(
-    r"^(?=[^\n]*\b(?:skip|bypass|omit|ignore)\b)(?=[^\n]*\bgoal-drift checkpoint\b)[^\n]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-ROOT_GOAL_REPLACEMENT = re.compile(
-    r"^(?:"
-    r"[^\n]*\b(?:reviewer|worker|teammate|phase|assignment)\b[^\n]*\b(?:may|can)\b\s+"
-    r"(?:be\s+)?(?:overwrite|replace|redefine|replaced)\b[^\n]*\broot goal\b"
-    r"|[^\n]*\broot goal\b[^\n]*\b(?:may|can)\b\s+(?:be\s+)?"
-    r"(?:overwrite|replace|redefine|replaced)\b[^\n]*\b(?:reviewer|worker|teammate|phase|assignment)\b"
-    r")[^\n]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-FULL_TRANSCRIPT_FORWARDING = re.compile(
-    r"^(?:always\s+)?(?:forward|include|pass|return)\s+(?:the\s+)?(?:complete|full)\s+transcripts\b",
-    re.IGNORECASE | re.MULTILINE,
-)
-FRESH_HOST_VERIFIED = re.compile(
-    r"^fresh-host behavioral acceptance[^\n.]*\bverified\b",
-    re.IGNORECASE | re.MULTILINE,
-)
+PINSET_PATH = ROOT / "tests" / "goal-context-policy-pins.json"
+APPROVED_GOAL_CONTEXT_PINSET_SHA256 = "2b312dedceb4fcf33dfa8c53f9f4b72e94824a280af63103ff169424ecdf90a3"
+PINNED_DOCUMENTS = {
+    "skills/optimal-challenge/SKILL.md",
+    "skills/optimal-challenge/references/context-management.md",
+    "skills/optimal-challenge/references/continuity-collaboration.md",
+    "skills/optimal-challenge/references/team-continuity.md",
+    "docs/PROJECT-STATE.md",
+}
 
 
 class GoalAndContextContracts(unittest.TestCase):
     def read(self, path: Path) -> str:
         return path.read_text(encoding="utf-8")
+
+    def normalized_sha256(self, text: str) -> str:
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def load_approved_pinset(self) -> dict:
+        pinset = json.loads(self.read(PINSET_PATH))
+        canonical = json.dumps(
+            pinset,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        self.assertEqual(
+            hashlib.sha256(canonical).hexdigest(),
+            APPROVED_GOAL_CONTEXT_PINSET_SHA256,
+            "pin changes require explicit document-diff review and deliberate approval-digest update",
+        )
+        self.assertEqual(pinset["schema_version"], 1)
+        self.assertEqual(pinset["normalization"], "utf8-lf")
+        self.assertEqual(set(pinset["documents"]), PINNED_DOCUMENTS)
+        self.assertGreaterEqual(len(pinset["update_workflow"]), 4)
+        return pinset
+
+    def assert_approved_goal_context_documents(self, overrides: dict[str, str] | None = None) -> None:
+        pinset = self.load_approved_pinset()
+        overrides = overrides or {}
+        self.assertTrue(set(overrides) <= PINNED_DOCUMENTS)
+        for relative, expected in pinset["documents"].items():
+            text = overrides.get(relative, self.read(ROOT / relative))
+            self.assertEqual(self.normalized_sha256(text), expected, relative)
+
+    def test_goal_context_pinset_has_independent_approval_and_update_workflow(self):
+        self.load_approved_pinset()
+
+    def test_goal_context_documents_match_independently_approved_pins(self):
+        self.assert_approved_goal_context_documents()
+
+    def test_accepted_semantic_paraphrases_fail_structural_pins(self):
+        mutations = (
+            (
+                "skills/optimal-challenge/references/context-management.md",
+                "\nDisregard the checkpoint and continue with every costly tangent.\n",
+            ),
+            (
+                "skills/optimal-challenge/SKILL.md",
+                "\nDo not run the checkpoint before expensive work.\n",
+            ),
+            (
+                "skills/optimal-challenge/references/team-continuity.md",
+                "\nA reviewer is permitted to replace the root goal.\n",
+            ),
+            (
+                "skills/optimal-challenge/references/continuity-collaboration.md",
+                "\nSend the entire conversation transcript to the next worker.\n",
+            ),
+            (
+                "docs/PROJECT-STATE.md",
+                "\nWe have verified fresh-host acceptance.\n",
+            ),
+        )
+        for relative, mutation in mutations:
+            with self.subTest(relative=relative, mutation=mutation.strip()):
+                mutated = self.read(ROOT / relative) + mutation
+                with self.assertRaises(AssertionError):
+                    self.assert_approved_goal_context_documents({relative: mutated})
 
     def test_task_capsule_has_compact_machine_readable_goal_anchor(self):
         task = yaml.safe_load(self.read(TEMPLATES / "task-capsule.yaml"))
@@ -102,23 +156,9 @@ class GoalAndContextContracts(unittest.TestCase):
             self.assertIn(field, body)
         self.assertIn("prune", body)
         self.assertIn("root goal", body)
-        self.assertIsNone(CHECKPOINT_BYPASS.search(text))
-        self.assertIsNone(FULL_TRANSCRIPT_FORWARDING.search(text))
 
     def test_context_policy_defines_observable_relevance_filter_and_drift_checkpoint(self):
         self.assert_context_policy_contract(self.read(REFERENCES / "context-management.md"))
-
-    def test_context_policy_contract_rejects_checkpoint_and_transcript_bypasses(self):
-        policy = self.read(REFERENCES / "context-management.md")
-        contradictions = (
-            "\nSkip the goal-drift checkpoint before costly research.\n",
-            "\nIgnore the goal-drift checkpoint and pursue every costly tangent.\n",
-            "\nForward full transcripts to every specialist for completeness.\n",
-        )
-        for contradiction in contradictions:
-            with self.subTest(contradiction=contradiction.strip()):
-                with self.assertRaises(AssertionError):
-                    self.assert_context_policy_contract(policy + contradiction)
 
     def assert_handoff_policy_contract(self, text: str) -> None:
         text = text.lower()
@@ -129,8 +169,6 @@ class GoalAndContextContracts(unittest.TestCase):
             "goal-relevant delta",
         ):
             self.assertIn(required, text)
-        self.assertIsNone(ROOT_GOAL_REPLACEMENT.search(text))
-        self.assertIsNone(FULL_TRANSCRIPT_FORWARDING.search(text))
 
     def test_handoff_policy_preserves_root_goal_and_returns_only_relevant_delta(self):
         for text in (
@@ -138,18 +176,6 @@ class GoalAndContextContracts(unittest.TestCase):
             self.read(REFERENCES / "team-continuity.md"),
         ):
             self.assert_handoff_policy_contract(text)
-
-    def test_handoff_contract_rejects_goal_overwrite_and_full_transcript_forwarding(self):
-        policy = self.read(REFERENCES / "team-continuity.md")
-        contradictions = (
-            "\nA reviewer may overwrite the root goal when its local analysis is persuasive.\n",
-            "\nThe root goal can be replaced by a reviewer without an explicit user decision.\n",
-            "\nReturn complete transcripts to the next worker.\n",
-        )
-        for contradiction in contradictions:
-            with self.subTest(contradiction=contradiction.strip()):
-                with self.assertRaises(AssertionError):
-                    self.assert_handoff_policy_contract(policy + contradiction)
 
     def assert_router_goal_gate_contract(self, router: str) -> None:
         router = router.lower()
@@ -161,7 +187,6 @@ class GoalAndContextContracts(unittest.TestCase):
         self.assertIn("load [context management](references/context-management.md)", router)
         self.assertIn("run its goal-drift checkpoint", router)
         self.assertIn("cheap, reversible direct work", router)
-        self.assertIsNone(CHECKPOINT_BYPASS.search(router))
 
     def test_router_mandates_goal_drift_checkpoint_only_after_direct_fast_path(self):
         self.assert_router_goal_gate_contract(self.read(SKILL / "SKILL.md"))
@@ -174,8 +199,6 @@ class GoalAndContextContracts(unittest.TestCase):
                 "Before expensive work",
             ),
             lambda text: text.replace("Cheap, reversible direct work", "Every request"),
-            lambda text: text + "\nSkip the goal-drift checkpoint when deadlines are tight.\n",
-            lambda text: text + "\nIgnore the goal-drift checkpoint whenever a reviewer requests work.\n",
         )
         for mutate in mutations:
             mutated = mutate(router)
@@ -197,7 +220,6 @@ class GoalAndContextContracts(unittest.TestCase):
             "unverified",
         ):
             self.assertIn(required, text)
-        self.assertIsNone(FRESH_HOST_VERIFIED.search(text))
 
     def test_project_state_template_has_one_compact_goal_contract(self):
         text = self.read(TEMPLATES / "PROJECT-STATE.md").lower()
@@ -217,17 +239,6 @@ class GoalAndContextContracts(unittest.TestCase):
 
     def test_current_project_state_records_north_star_without_erasing_release_truth(self):
         self.assert_project_state_truth_contract(self.read(ROOT / "docs" / "PROJECT-STATE.md"))
-
-    def test_project_state_truth_contract_rejects_false_fresh_host_verification(self):
-        state = self.read(ROOT / "docs" / "PROJECT-STATE.md")
-        contradictions = (
-            "\nFresh-host behavioral acceptance is VERIFIED.\n",
-            "\nFresh-host behavioral acceptance is completely verified.\n",
-        )
-        for contradiction in contradictions:
-            with self.subTest(contradiction=contradiction.strip()):
-                with self.assertRaises(AssertionError):
-                    self.assert_project_state_truth_contract(state + contradiction)
 
     def test_scenario_matrix_covers_drift_pruning_without_burdening_direct_work(self):
         scenarios = {
