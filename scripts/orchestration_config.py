@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import weakref
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -24,7 +25,14 @@ PROFILE_DELEGATION_MARGINS: dict[str, int] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+_CONFIG_CONTEXT_ISSUER = object()
+_ISSUED_CONFIG_CONTEXTS: dict[int, weakref.ReferenceType[VerifiedCapabilityContext]] = {}
+# No current host adapter has demonstrated an executable budget stop handle.
+# Add a surface here only with an audited implementation and exact-version test.
+_OBSERVED_ENFORCEMENT_ADAPTERS: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class VerifiedCapabilityContext:
     """Trusted, time-bounded adapter evidence kept outside user configuration."""
 
@@ -37,6 +45,50 @@ class VerifiedCapabilityContext:
     observed_usage: bool
     local_stop_primitive: bool
     provider_stop_primitive: bool
+    _attestation: object | None = field(default=None, repr=False, compare=False)
+
+
+def issue_config_capability_context(
+    *, surface: str, version: str, usage_evidence: Any, enforcement_evidence: Any,
+    usage_policy: Mapping[str, Any], enforcement_policy: Mapping[str, Any], now: datetime,
+) -> VerifiedCapabilityContext:
+    """Bridge issued exact-surface resolver evidence into the config loader.
+
+    A JSON claim or a caller-created context cannot authorize enforced limits.
+    Real adapter support must be observed; no stop primitive is inferred here.
+    """
+    from scripts.optimal_challenge.capability_evidence import (
+        EnforcementProof, TrustedCapabilityEvidence, UsageCounterProof,
+    )
+    from scripts.optimal_challenge.capability_resolution import resolve_capability
+
+    if not isinstance(usage_evidence, TrustedCapabilityEvidence) or not isinstance(enforcement_evidence, TrustedCapabilityEvidence):
+        raise ValueError("issued adapter evidence is required for both usage and enforcement")
+    if usage_evidence.capability != "usage_measurement" or enforcement_evidence.capability not in {"local_enforcement", "provider_enforcement"}:
+        raise ValueError("usage and enforcement capability proofs are required")
+    if not isinstance(usage_evidence.proof, UsageCounterProof) or not isinstance(enforcement_evidence.proof, EnforcementProof):
+        raise ValueError("typed usage counter and stop primitive proofs are required")
+    usage = resolve_capability(surface, usage_evidence, None, usage_policy, now)
+    stop = resolve_capability(surface, enforcement_evidence, None, enforcement_policy, now)
+    if any(result.get("support_level") != "observed" or result.get("verified_version") != version or result.get("surface") != surface
+           for result in (usage, stop)):
+        raise ValueError("exact-surface observed resolver support is required")
+    if usage_evidence.proof.observed is not True or enforcement_evidence.proof.usage_counter != usage_evidence.proof:
+        raise ValueError("stop proof must use the same observed usage counter")
+    if surface not in _OBSERVED_ENFORCEMENT_ADAPTERS:
+        raise ValueError("no observed executable stop adapter exists for this surface; use advisory enforcement")
+    context = VerifiedCapabilityContext(
+        surface=surface, version=version, provenance=usage_evidence.provenance,
+        evidence_ref=f"{usage_evidence.evidence_ref}|{enforcement_evidence.evidence_ref}",
+        verified_at=max(usage_evidence.verified_at, enforcement_evidence.verified_at),
+        expires_at=min(usage_evidence.expires_at, enforcement_evidence.expires_at),
+        observed_usage=True,
+        local_stop_primitive=enforcement_evidence.capability == "local_enforcement",
+        provider_stop_primitive=enforcement_evidence.capability == "provider_enforcement",
+        _attestation=_CONFIG_CONTEXT_ISSUER,
+    )
+    _ISSUED_CONFIG_CONTEXTS[id(context)] = weakref.ref(context)
+    return context
 
 BUILT_IN_DEFAULTS: dict[str, Any] = {
     "schema_version": 1,
@@ -217,7 +269,10 @@ def _capability_context_errors(
     now: datetime | None,
 ) -> list[str]:
     path = "$context.capabilities"
-    if not isinstance(context, VerifiedCapabilityContext):
+    if (not isinstance(context, VerifiedCapabilityContext)
+            or context._attestation is not _CONFIG_CONTEXT_ISSUER
+            or id(context) not in _ISSUED_CONFIG_CONTEXTS
+            or _ISSUED_CONFIG_CONTEXTS[id(context)]() is not context):
         return [f"{path}: enforced limits require trusted adapter capability context"]
 
     errors: list[str] = []

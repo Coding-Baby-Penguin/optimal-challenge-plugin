@@ -6,14 +6,14 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from copy import deepcopy
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from scripts.orchestration_config import VerifiedCapabilityContext, load_effective_config, validate_config
+from scripts.orchestration_config import VerifiedCapabilityContext, issue_config_capability_context, load_effective_config, validate_config
+from scripts.capability_matrix import EnforcementProof, UsageCounterProof, issue_adapter_evidence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,7 +138,7 @@ class OrchestrationConfigTests(unittest.TestCase):
             }
         )
         now = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
-        trusted = VerifiedCapabilityContext(
+        invented = VerifiedCapabilityContext(
             surface="codex-local",
             version="1.2.3",
             provenance="live_detection",
@@ -150,73 +150,59 @@ class OrchestrationConfigTests(unittest.TestCase):
             provider_stop_primitive=True,
         )
 
+        def policy(capability):
+            return {
+                "surface_id": "codex-local", "capability": capability,
+                "support_level": "policy-only", "detector": "policy:fixture",
+                "evidence_ref": "policy:fixture", "verified_version": "1.2.3",
+                "verified_at": "2026-09-01T00:00:00Z", "expires_at": "2026-12-01T00:00:00Z",
+                "provenance": "policy_declaration", "required_fallback": "advisory",
+                "measurement_surface": "codex-product-usage",
+            }
+
+        counter = UsageCounterProof("codex-local", "1.2.3", "codex-product-usage", "counter:fixture", True)
+        def evidence(capability, proof):
+            return issue_adapter_evidence(
+                surface_id="codex-local", capability=capability, support_level="observed",
+                adapter_id="codex-host", evidence_id=f"fixture-{capability}",
+                verified_version="1.2.3", verified_at=now - timedelta(minutes=5),
+                expires_at=now + timedelta(minutes=55), provenance="live_detection",
+                required_fallback="advisory", proof=proof,
+            )
+        # These proofs are synthetically issued by a unit fixture. The current
+        # CLI has no audited executable budget-stop adapter, so they must not
+        # unlock provider enforcement in the released loader.
+        with self.assertRaisesRegex(ValueError, "no observed executable stop adapter"):
+            issue_config_capability_context(
+                surface="codex-local", version="1.2.3",
+                usage_evidence=evidence("usage_measurement", counter),
+                enforcement_evidence=evidence(
+                    "provider_enforcement",
+                    EnforcementProof("codex-local", "1.2.3", counter, "provider", "codex_provider_stop"),
+                ),
+                usage_policy=policy("usage_measurement"),
+                enforcement_policy=policy("provider_enforcement"), now=now,
+            )
+
         missing_context_errors = validate_config(config)
         self.assertTrue(
             any("$context.capabilities" in error for error in missing_context_errors),
             missing_context_errors,
         )
-        self.assertEqual(
-            validate_config(
-                config,
-                capability_context=trusted,
-                expected_surface="codex-local",
-                expected_version="1.2.3",
-                now=now,
-            ),
-            [],
-        )
-        loaded = load_effective_config(
-            ROOT,
-            task_override={
-                "budget": {
-                    "unit": "tokens",
-                    "limit": 1000,
-                    "measurement": "observed",
-                    "enforcement": "provider_enforced",
-                    "measurement_source": "provider usage counter",
-                }
-            },
-            capability_context=trusted,
-            expected_surface="codex-local",
-            expected_version="1.2.3",
-            now=now,
-        )
-        self.assertEqual(loaded["budget"]["enforcement"], "provider_enforced")
-
-        invalid_contexts = {
-            "surface": replace(trusted, surface="claude-local"),
-            "version": replace(trusted, version="0.9"),
-            "provenance": replace(trusted, provenance="policy_only"),
-            "provenance_type": replace(trusted, provenance={}),
-            "expired": replace(trusted, expires_at=now),
-            "future": replace(trusted, verified_at=now + timedelta(seconds=1)),
-            "usage": replace(trusted, observed_usage=False),
-            "stop": replace(trusted, provider_stop_primitive=False),
-        }
-        for label, context in invalid_contexts.items():
-            with self.subTest(label=label):
-                errors = validate_config(
-                    config,
-                    capability_context=context,
-                    expected_surface="codex-local",
-                    expected_version="1.2.3",
-                    now=now,
-                )
-                self.assertTrue(any("$context.capabilities" in error for error in errors), errors)
-
-        config["budget"]["enforcement"] = "local_enforced"
-        self.assertTrue(
-            any(
-                "local stop primitive" in error
-                for error in validate_config(
-                    config,
-                    capability_context=trusted,
-                    expected_surface="codex-local",
-                    expected_version="1.2.3",
-                    now=now,
-                )
+        self.assertTrue(any("trusted adapter" in error for error in validate_config(
+            config, capability_context=invented, expected_surface="codex-local",
+            expected_version="1.2.3", now=now)), "caller-created context must be rejected")
+        with self.assertRaisesRegex(ValueError, "trusted adapter capability context"):
+            load_effective_config(
+                ROOT,
+                task_override={"budget": {"unit": "tokens", "limit": 1000,
+                                          "measurement": "observed", "enforcement": "provider_enforced",
+                                          "measurement_source": "provider usage counter"}},
+                expected_surface="codex-local", expected_version="1.2.3", now=now,
             )
-        )
+        config["budget"]["enforcement"] = "advisory"
+        self.assertEqual(validate_config(config, expected_surface="codex-local",
+                                         expected_version="1.2.3", now=now), [])
 
     def test_user_configuration_cannot_supply_capability_evidence(self):
         untrusted = {

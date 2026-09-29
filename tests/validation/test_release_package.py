@@ -119,6 +119,20 @@ class ReleasePackageTests(unittest.TestCase):
             [".codex-plugin/plugin.json", "a.txt", "nested/z.txt"],
         )
 
+    def test_raw_results_are_ignored_locally_and_excluded_even_if_force_tracked(self):
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("/tests/results/", ignore)
+        check = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "--no-index", "--quiet",
+                                "tests/results/probe/raw.json"], capture_output=True)
+        self.assertEqual(check.returncode, 0, check.stderr.decode("utf-8", errors="replace"))
+        self.assertIn("tests/results/**", json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))["packaging"]["excludes"])
+        (self.root / "tests" / "results" / "probe").mkdir(parents=True)
+        raw = self.root / "tests" / "results" / "probe" / "raw.json"
+        raw.write_text('{"private":"fixture"}', encoding="utf-8")
+        self._git("add", "-f", "tests/results/probe/raw.json")
+        selected = iter_package_files(self.root, ["tests/results/**"])
+        self.assertNotIn(raw, selected)
+
     def _git(self, *args: str) -> None:
         subprocess.run(
             ["git", "-C", str(self.root), *args],

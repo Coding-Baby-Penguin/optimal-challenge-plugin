@@ -131,6 +131,12 @@ the configured enforcement mode. Missing or mismatched trusted context fails
 closed. Therefore the defaults are advisory and do not promise automatic
 prevention, exact remaining spend, or cancellation of running work.
 
+Current hosts have no audited executable budget-stop adapter. A typed proof
+containing an allowlisted stop name does not prove that the host can execute
+the stop. `issue_config_capability_context` rejects enforced-mode issuance for
+all current surfaces, including Codex CLI, until an exact-version adapter with
+an observed executable stop handle and read-back is added. Use `advisory` now.
+
 Example one-request override:
 
 ```python

@@ -196,9 +196,12 @@ class PackageIndependentReview(unittest.TestCase):
             "platform-codex.md and platform-claude.md filenames remain stable",
             ".optimal-challenge/ remains ignored and reconstructable",
             "docs/project-state.md remains the only canonical project state",
-            "fresh-host behavioral acceptance remains `unverified`",
         ]:
             self.assertIn(phrase.replace("`", ""), semantic_text)
+        acceptance_claims = [line for line in semantic_text.splitlines() if "behavioral acceptance" in line]
+        self.assertTrue(any("unverified" in line for line in acceptance_claims))
+        self.assertFalse(any(re.search(r"behavioral acceptance[^.\n]{0,160}\b(?:passed|verified)\b", line)
+                             for line in acceptance_claims))
 
     def test_skill_is_small_and_trigger_focused(self):
         text = (SKILL_DIR / "SKILL.md").read_text()

@@ -9,6 +9,7 @@ from .evaluation_statistics import (
     summarize_arm, _paired_records, _bootstrap_interval, _simple_metric_gate,
     _high_value_gate, _invalid_comparison, _rate,
 )
+from scripts.evaluation_evidence import VerifiedEvaluationContext, context_covers_comparison
 
 def _bundle_verified(bundle: Mapping[str, Any], manifest: Mapping[str, Any]) -> bool:
     arm = _arm(manifest, bundle.get("arm_id")) or {}
@@ -37,7 +38,8 @@ def _bundle_evidence_ids(bundle: Mapping[str, Any], field: str) -> set[str]:
 
 
 def compare_arms(
-    baseline: Mapping[str, Any], candidate: Mapping[str, Any], manifest: Mapping[str, Any]
+    baseline: Mapping[str, Any], candidate: Mapping[str, Any], manifest: Mapping[str, Any],
+    *, evidence_context: VerifiedEvaluationContext | None = None,
 ) -> dict[str, Any]:
     """Compare isolated arms using the manifest's exact release margins."""
 
@@ -138,7 +140,8 @@ def compare_arms(
         or unexplained_quality_drop
     )
     statistical_inconclusive = any(value["status"] == "inconclusive" for value in simple.values()) or high_value["status"] == "inconclusive"
-    if not (_bundle_verified(baseline, manifest) and _bundle_verified(candidate, manifest)):
+    verified_context = _bundle_verified(baseline, manifest) and _bundle_verified(candidate, manifest) and context_covers_comparison(evidence_context, manifest, baseline, candidate)
+    if not verified_context:
         status = "unverified"
     elif failure:
         status = "fail"
@@ -146,8 +149,25 @@ def compare_arms(
         status = "inconclusive"
     else:
         status = "pass"
+    if not verified_context:
+        quality_claim = "unverified"
+        for result in simple.values():
+            result["claim_allowed"] = False
+        high_value["claim_allowed"] = False
     return {
         "status": status,
+        "evidence_status": "verified" if verified_context else "unverified",
+        "comparative_claim_allowed": status == "pass" and verified_context,
+        "semantic_diagnostics": {
+            "status": (
+                "not_applicable" if verified_context and not evidence_context.semantic_required_run_ids
+                else "verified" if verified_context and set(evidence_context.semantic_required_run_ids) == set(evidence_context.semantic_observed_run_ids)
+                else "unverified"
+            ),
+            "required_runs": len(evidence_context.semantic_required_run_ids) if verified_context else None,
+            "observed_runs": len(evidence_context.semantic_observed_run_ids) if verified_context else None,
+            "basis": "audited native trace" if verified_context else "no trusted comparison context",
+        },
         "errors": [],
         "baseline": baseline_summary,
         "candidate": candidate_summary,

@@ -30,6 +30,7 @@ htmlcov/
 coverage/
 *.log
 logs/
+/tests/results/
 
 # Generated packages and scratch output
 dist/

@@ -233,10 +233,12 @@ class GoalAndContextContracts(unittest.TestCase):
             "no security",
             "no universal workflow ceremony",
             "context pruning",
-            "fresh-host behavioral acceptance",
-            "unverified",
         ):
             self.assertIn(required, text)
+        unresolved = next((line for line in text.splitlines() if "unresolved failures:" in line), "")
+        self.assertIn("behavioral acceptance", unresolved)
+        self.assertIn("unverified", unresolved)
+        self.assertNotRegex(unresolved, r"behavioral acceptance[^.\n]{0,160}\b(?:passed|verified)\b")
 
     def test_project_state_template_has_one_compact_goal_contract(self):
         text = self.read(TEMPLATES / "PROJECT-STATE.md").lower()
