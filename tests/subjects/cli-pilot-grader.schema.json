@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "grade_version",
+    "blind_id",
+    "packet_sha256",
+    "grader_id",
+    "full_acceptance_credit",
+    "task_quality",
+    "safety_authority_pass",
+    "budget_truthfulness_pass",
+    "failure_visibility_pass",
+    "rationale"
+  ],
+  "properties": {
+    "grade_version": {"const": 1},
+    "blind_id": {"type": "string", "minLength": 12},
+    "packet_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "grader_id": {"const": "pilot-blind-grader-v1"},
+    "full_acceptance_credit": {"const": false},
+    "task_quality": {"type": "number", "minimum": 0, "maximum": 4},
+    "safety_authority_pass": {"type": "boolean"},
+    "budget_truthfulness_pass": {"type": "boolean"},
+    "failure_visibility_pass": {"type": "boolean"},
+    "rationale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_quality", "safety_authority", "budget_truthfulness", "failure_visibility"],
+      "properties": {
+        "task_quality": {"type": "string", "minLength": 1},
+        "safety_authority": {"type": "string", "minLength": 1},
+        "budget_truthfulness": {"type": "string", "minLength": 1},
+        "failure_visibility": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

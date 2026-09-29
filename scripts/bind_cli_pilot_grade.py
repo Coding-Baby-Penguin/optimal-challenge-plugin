@@ -178,6 +178,18 @@ def bind_grade(*, identity_path: Path, plan_path: Path, manifest_path: Path,
     if usage["provenance"] == "observed":
         if not grader_rollouts:
             raise ValueError("observed grader usage needs retained native rollouts")
+        grader_sessions = packet_path.parent / "grader-home" / "sessions"
+        if grader_sessions.is_symlink() or not grader_sessions.is_dir():
+            raise ValueError("independent grader home is missing or linked")
+        for path in grader_rollouts:
+            current = Path(path).absolute()
+            if (not current.is_file() or any(part.is_symlink() for part in
+                    (current, *current.parents))):
+                raise ValueError("grader native rollout path is unavailable or linked")
+            try:
+                current.resolve(strict=True).relative_to(grader_sessions.resolve(strict=True))
+            except (OSError, ValueError):
+                raise ValueError("grader native rollout is outside its blind home") from None
         grader_native = extract_job(grader_rollouts)
         if (usage.get("native_sha256s") != [item["native_sha256"] for item in grader_native["sessions"]] or
                 any(usage.get(field) != grader_native["usage"][field] for field in

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 from scripts.bind_cli_pilot_grade import PHASES, bind_grade, make_blind_packet
 from scripts.codex_cli_rollout import extract_job
 from tests.validation.test_codex_cli_rollout import _session, _write
@@ -22,6 +24,22 @@ def _save(path: Path, value: dict) -> Path:
 
 
 class CliPilotGradeTests(unittest.TestCase):
+    def test_blind_grader_prompt_and_schema_are_frozen_before_host_output(self):
+        subject_root = Path(__file__).resolve().parents[1] / "subjects"
+        schema_path = subject_root / "cli-pilot-grader.schema.json"
+        prompt_path = subject_root / "cli-pilot-grader.prompt.txt"
+        self.assertEqual(_sha(schema_path.read_bytes()),
+                         "af3c3b2f2d911ec7c8649a967796e2663ede32b261751cde9d8fff3edc3cedab")
+        self.assertEqual(_sha(prompt_path.read_bytes()),
+                         "b3298bc3c7d87c4fc99764739b98dd265b653e54816715fb1ff7122a829af2b4")
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        self.assertFalse(schema["additionalProperties"])
+        prompt = prompt_path.read_text(encoding="utf-8")
+        for marker in ("{{PACKET_PATH}}", "{{PACKET_SHA256}}", "{{BLIND_ID}}"):
+            self.assertIn(marker, prompt)
+        self.assertNotIn("quality-D-local", prompt)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -155,7 +173,9 @@ class CliPilotGradeTests(unittest.TestCase):
         # Native final answer is the judgment without recorder-added usage.
         native_records[3]["payload"]["content"][0]["text"] = json.dumps(
             {key: value for key, value in self.grade.items() if key != "grader_usage"}, indent=2)
-        rollout = _write(self.root / "grader-native.jsonl", native_records)
+        grader_sessions = self.root / "grader-home" / "sessions"
+        grader_sessions.mkdir(parents=True)
+        rollout = _write(grader_sessions / "grader-native.jsonl", native_records)
         audit = extract_job([rollout])
         self.grade["grader_usage"] = {"provenance": "observed", "input_tokens": 20,
                                       "output_tokens": 2,
@@ -166,6 +186,9 @@ class CliPilotGradeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "native rollouts"):
             self.bind()
         self.assertEqual(self.bind([rollout])["whole_job_tokens"], 32)
+        outside = _write(self.root / "reused-native.jsonl", native_records)
+        with self.assertRaisesRegex(ValueError, "outside its blind home"):
+            self.bind([outside])
         self.grade["grader_usage"]["input_tokens"] = 21
         _save(self.grade_path, self.grade)
         with self.assertRaisesRegex(ValueError, "differs"):
