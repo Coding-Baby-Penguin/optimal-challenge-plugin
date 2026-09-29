@@ -134,6 +134,44 @@ def validate_surface_audit(surface: dict, native: dict) -> list[str]:
     return []
 
 
+def verify_prelaunch_snapshot(plan_path: Path, pilot_manifest_path: Path) -> tuple[str | None, list[str]]:
+    """Bind retained prelaunch seed copies; controller ordering still needs audit."""
+    errors = []
+    try:
+        root = plan_path.parent.resolve(strict=True)
+        plan_bytes = plan_path.read_bytes()
+        plan = _strict_object(plan_bytes)
+        manifest_bytes = pilot_manifest_path.read_bytes()
+        manifest = _strict_object(manifest_bytes)
+        record_path = root / "prelaunch-snapshot.json"
+        record_bytes = record_path.read_bytes()
+        record = _strict_object(record_bytes)
+        cases = [case for case in manifest.get("cases", []) if isinstance(case, dict) and case.get("id") == plan.get("case_id")]
+        if len(cases) != 1:
+            errors.append("frozen pilot case is missing or duplicated")
+            expected = {}
+        else:
+            workspace = cases[0].get("workspace")
+            expected = {} if workspace is None else manifest.get("workspace_file_sha256s", {}).get(workspace)
+        if (not isinstance(expected, dict) or record.get("status") != "captured-unreviewed" or
+                record.get("run_id") != plan.get("run_id") or record.get("case_id") != plan.get("case_id") or
+                record.get("arm_id") != plan.get("arm_id") or
+                record.get("run_plan_sha256") != _sha(plan_bytes) or
+                record.get("pilot_manifest_sha256") != _sha(manifest_bytes) or
+                record.get("source_workspace_relpath") != "workspace" or
+                record.get("snapshot_relpath") != "prelaunch-input" or
+                record.get("file_sha256s") != expected):
+            errors.append("prelaunch snapshot does not bind frozen run inputs")
+        snapshot_root = root / "prelaunch-input"
+        if snapshot_root.is_symlink() or _tree_members(snapshot_root) != set(expected):
+            errors.append("prelaunch snapshot files are missing, unexpected or unsafe")
+        elif any(_sha(_file_under(snapshot_root, name)) != digest for name, digest in expected.items()):
+            errors.append("prelaunch snapshot bytes differ from frozen seed")
+        return _sha(record_bytes) if not errors else None, errors
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return None, ["prelaunch snapshot is missing or malformed"]
+
+
 def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: Path, subject_path: Path, source_root: Path, archive: Path,
                      installed_root: Path, registry_json: Path, registry_source: Path,
                      stream: Path, rollouts: Sequence[Path]) -> dict:
@@ -147,6 +185,8 @@ def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: P
     output_root = plan_path.parent.resolve(strict=True)
     home = output_root / "host-home"
     errors = verify_run_scoping(output_root, home, installed_root, registry_json, stream, rollouts)
+    snapshot_sha, snapshot_errors = verify_prelaunch_snapshot(plan_path, pilot_manifest_path)
+    errors.extend(snapshot_errors)
     matching_cases = [case for case in pilot_manifest.get("cases", [])
                       if isinstance(case, dict) and case.get("id") == plan.get("case_id")]
     if (_sha(pilot_manifest_bytes) != plan.get("manifest_sha256") or
@@ -195,6 +235,7 @@ def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: P
         "status": "identity_activation_verified", "quality_claim": "unverified",
         "full_acceptance_credit": False, "run_id": plan["run_id"], "case_id": plan["case_id"],
         "run_plan_sha256": _sha(plan_bytes), "pilot_manifest_sha256": _sha(pilot_manifest_bytes),
+        "prelaunch_snapshot_sha256": snapshot_sha,
         "surface_manifest_sha256": _sha(surface_bytes),
         "arm_id": plan["arm_id"], "archive_sha256": identity["archive_sha256"],
         "subject_manifest_sha256": _sha(subject_path.read_bytes()),

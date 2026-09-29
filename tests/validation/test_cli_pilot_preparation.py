@@ -121,3 +121,16 @@ class CliPilotPreparationTests(unittest.TestCase):
         self.assertEqual(validate_surface_audit(surface, native), [])
         native["model"] = "another-model"
         self.assertIn("model", " ".join(validate_surface_audit(surface, native)))
+
+    def test_prelaunch_snapshot_preserves_exact_seed_before_code_edits(self):
+        from scripts.snapshot_cli_pilot_input import snapshot_input
+        from scripts.verify_cli_pilot_run import verify_prelaunch_snapshot
+        output = self.root / "run-prelaunch"
+        prepare_run(self.manifest, self.manifest_sha, self.seed, "fix-code", "D", "run-prelaunch", output)
+        record = snapshot_input(output / "run-plan.json", self.manifest)
+        self.assertEqual(record["status"], "captured-unreviewed")
+        self.assertEqual(verify_prelaunch_snapshot(output / "run-plan.json", self.manifest)[1], [])
+        (output / "workspace/app/task.py").write_bytes(b"VALUE = 1\n")
+        self.assertEqual(verify_prelaunch_snapshot(output / "run-plan.json", self.manifest)[1], [])
+        (output / "prelaunch-input/app/task.py").write_bytes(b"VALUE = 2\n")
+        self.assertTrue(verify_prelaunch_snapshot(output / "run-plan.json", self.manifest)[1])
