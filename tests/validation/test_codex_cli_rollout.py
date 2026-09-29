@@ -21,12 +21,19 @@ def _record(kind: str, **payload):
 
 
 def _session(session: str, turn: str, *, parent: str | None = None, inherited: list[dict] | None = None,
-             input_tokens: int = 10, output_tokens: int = 2, spawn: bool = False):
+             input_tokens: int = 10, output_tokens: int = 2, spawn: bool = False,
+             guardian: bool = False):
+    source = "exec" if parent is None else ({"subagent": {"other": "guardian"}} if guardian else
+            {"subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1,
+                                            "agent_path": "/root/child", "agent_nickname": "Child",
+                                            "agent_role": None}}})
     records = [_record("session_meta", id=session, cli_version="0.158.0-alpha.2.1",
-                       parent_thread_id=parent, source="exec" if parent is None else {"subagent": {}})]
+                       parent_thread_id=parent, source=source)]
     records.extend(inherited or [])
     records += [_record("event_msg", type="task_started", turn_id=turn),
-                _record("turn_context", turn_id=turn, model="gpt-6-sol", effort="medium")]
+                _record("turn_context", turn_id=turn,
+                        model="codex-auto-review" if guardian else "gpt-6-sol",
+                        effort="low" if guardian else "medium")]
     if spawn:
         records.append(_record("response_item", type="function_call", name="spawn_agent",
                                namespace="collaboration", call_id="call-1", arguments="opaque"))
@@ -87,6 +94,55 @@ class CodexCliRolloutTests(unittest.TestCase):
             self.assertEqual(sum(event["type"] == "spawn_agent" for event in report["tool_events"]), 1)
             self.assertEqual(report["host"], "codex-cli")
             self.assertEqual(report["quality_claim"], "unverified")
+
+    def test_native_guardian_review_is_overhead_not_product_delegation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = _session("parent", "parent-turn", input_tokens=100, output_tokens=3)
+            guardian = _session("review", "review-turn", parent="parent", inherited=parent[:4],
+                                input_tokens=20, output_tokens=2, guardian=True)
+            report = extract_job([_write(root / "parent.jsonl", parent),
+                                  _write(root / "review.jsonl", guardian)])
+            self.assertEqual(report["usage"]["whole_job_tokens"], 125)
+            self.assertEqual(report["usage"]["review_tokens"], 22)
+            self.assertEqual(report["usage"]["product_tokens"], 103)
+            self.assertEqual(report["usage"]["guardian_session_count"], 1)
+            self.assertEqual(report["usage"]["product_session_count"], 1)
+            self.assertEqual(report["tool_events"], [])
+            self.assertEqual(report["sessions"][1]["session_role"], "review-guardian")
+            guardian[0]["payload"]["source"] = {"subagent": {"other": "unknown"}}
+            with self.assertRaisesRegex(ValueError, "source"):
+                extract_job([_write(root / "parent.jsonl", parent),
+                             _write(root / "review.jsonl", guardian)])
+            guardian[0]["payload"]["source"] = {"subagent": {"other": "guardian"}}
+            next(record for record in guardian if record["type"] == "turn_context" and
+                 record["payload"]["turn_id"] == "review-turn")["payload"]["model"] = "different-model"
+            with self.assertRaisesRegex(ValueError, "guardian.*model"):
+                extract_job([_write(root / "parent.jsonl", parent),
+                             _write(root / "review.jsonl", guardian)])
+
+    def test_guardian_can_review_a_product_child_but_not_another_guardian(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = _session("parent", "parent-turn", spawn=True)
+            child = _session("child", "child-turn", parent="parent")
+            guardian = _session("review", "review-turn", parent="child", guardian=True)
+            paths = [_write(root / "parent.jsonl", parent), _write(root / "child.jsonl", child),
+                     _write(root / "review.jsonl", guardian)]
+            report = extract_job(paths)
+            self.assertEqual(report["usage"]["product_session_count"], 2)
+            self.assertEqual(report["usage"]["guardian_session_count"], 1)
+            self.assertEqual(sum(event["type"] == "spawn_agent" for event in report["tool_events"]), 1)
+            guardian[0]["payload"]["parent_thread_id"] = "review-2"
+            other = _session("review-2", "review-2-turn", parent="child", guardian=True)
+            with self.assertRaisesRegex(ValueError, "guardian.*product"):
+                extract_job(paths[:2] + [_write(root / "review-2.jsonl", other),
+                                         _write(root / "review.jsonl", guardian)])
+            guardian[0]["payload"]["parent_thread_id"] = "child"
+            product_under_review = _session("nested", "nested-turn", parent="review")
+            with self.assertRaisesRegex(ValueError, "ancestry"):
+                extract_job(paths[:2] + [_write(root / "review.jsonl", guardian),
+                                         _write(root / "nested.jsonl", product_under_review)])
 
     def test_missing_terminal_counters_and_duplicate_native_json_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

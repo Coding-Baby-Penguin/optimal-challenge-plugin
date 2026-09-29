@@ -77,6 +77,38 @@ class CliPilotPreparationTests(unittest.TestCase):
         self.assertTrue(any("per-run host home" in error for error in
                             verify_run_scoping(output, home, checkpoint, registry, stream, [rollout])))
 
+    def test_registry_inventory_preserves_remote_plugins_and_rejects_second_local_subject(self):
+        from scripts.verify_cli_pilot_run import compare_ambient_plugin_inventories, summarize_registry_inventory
+        target = {"pluginId": "optimal-challenge@quality-A-local", "name": "optimal-challenge",
+                  "version": "1.1.0", "marketplaceName": "quality-A-local", "installed": True,
+                  "enabled": True, "source": {"source": "local", "path": "C:/run/marketplace/optimal-challenge"}}
+        remote = {"pluginId": "superpowers@openai-curated-remote", "name": "superpowers",
+                  "version": "6.4.2", "marketplaceName": "openai-curated-remote", "installed": True,
+                  "enabled": True, "source": {"source": "remote"}}
+        inventory, errors = summarize_registry_inventory({"installed": [target, remote]}, target["pluginId"])
+        self.assertEqual(errors, [])
+        self.assertEqual(inventory["status"], "target_verified_with_shared_remote_plugins")
+        self.assertEqual([item["plugin_id"] for item in inventory["other_installed_enabled"]],
+                         ["superpowers@openai-curated-remote"])
+        another_target = {**target, "pluginId": "optimal-challenge@quality-D-local",
+                          "marketplaceName": "quality-D-local"}
+        other_inventory, errors = summarize_registry_inventory(
+            {"installed": [remote, another_target]}, another_target["pluginId"])
+        self.assertEqual(errors, [])
+        first_receipt = {"status": "identity_activation_verified", "registry_inventory": inventory}
+        second_receipt = {"status": "identity_activation_verified", "registry_inventory": other_inventory}
+        self.assertEqual(compare_ambient_plugin_inventories([first_receipt, second_receipt]), [])
+        remote["version"] = "changed"
+        changed_inventory, errors = summarize_registry_inventory(
+            {"installed": [remote, another_target]}, another_target["pluginId"])
+        self.assertEqual(errors, [])
+        self.assertIn("differs", " ".join(compare_ambient_plugin_inventories(
+            [first_receipt, {"status": "identity_activation_verified", "registry_inventory": changed_inventory}])))
+        second = {**target, "pluginId": "optimal-challenge@quality-D-local",
+                  "marketplaceName": "quality-D-local"}
+        _, errors = summarize_registry_inventory({"installed": [target, remote, second]}, target["pluginId"])
+        self.assertIn("second local subject", " ".join(errors))
+
     def test_native_skill_read_requires_exact_installed_bytes_and_session(self):
         from scripts.verify_cli_pilot_run import verify_skill_activation
         skill = self.root / "host-home/plugins/cache/local/plugin/1.2.0/skills/optimal-challenge/SKILL.md"

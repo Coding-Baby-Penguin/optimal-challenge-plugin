@@ -86,9 +86,25 @@ def extract_rollout(path: Path) -> dict[str, Any]:
     if parent is not None and (not isinstance(parent, str) or not parent):
         raise ValueError("malformed parent session identity")
     source = meta.get("source")
-    if (parent is None and source != "exec") or (parent is not None and
-            (not isinstance(source, dict) or not isinstance(source.get("subagent"), dict))):
-        raise ValueError("native session is not a Codex CLI exec source")
+    if parent is None:
+        if source != "exec":
+            raise ValueError("native session is not a Codex CLI exec source")
+        session_role = "product-root"
+    else:
+        subagent = source.get("subagent") if isinstance(source, dict) else None
+        if not isinstance(subagent, dict):
+            raise ValueError("native child is not a recognized Codex CLI source")
+        if subagent == {"other": "guardian"}:
+            session_role = "review-guardian"
+        else:
+            spawned = subagent.get("thread_spawn")
+            if (not isinstance(spawned, dict) or spawned.get("parent_thread_id") != parent or
+                    not isinstance(spawned.get("agent_path"), str) or
+                    not spawned["agent_path"].startswith("/root/") or
+                    not isinstance(spawned.get("depth"), int) or
+                    isinstance(spawned.get("depth"), bool) or spawned["depth"] < 1):
+                raise ValueError("native child is not a recognized Codex CLI source")
+            session_role = "product-child"
     starts = [(index, record["payload"].get("turn_id")) for index, record in enumerate(records)
               if record.get("type") == "event_msg" and record["payload"].get("type") == "task_started"]
     contexts = {record["payload"].get("turn_id"): record["payload"] for record in records
@@ -103,6 +119,8 @@ def extract_rollout(path: Path) -> dict[str, Any]:
     context = contexts[turn_id]
     if any(not isinstance(context.get(field), str) or not context[field].strip() for field in ("model", "effort")):
         raise ValueError("native model or reasoning effort is missing")
+    if session_role == "review-guardian" and (context["model"], context["effort"]) != ("codex-auto-review", "low"):
+        raise ValueError("native guardian has an unsupported model or reasoning effort")
     own = records[start_index:]
     completion = [r["payload"] for r in own if r.get("type") == "event_msg"
                   and r["payload"].get("type") == "task_complete"
@@ -139,6 +157,7 @@ def extract_rollout(path: Path) -> dict[str, Any]:
         "native_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "session_id": own_id,
         "parent_session_id": parent,
+        "session_role": session_role,
         "turn_id": turn_id,
         "host": "codex-cli",
         "host_source": "codex-cli",
@@ -165,9 +184,26 @@ def extract_job(paths: Sequence[Path]) -> dict[str, Any]:
     ids = {item["session_id"] for item in sessions}
     if any(item["parent_session_id"] not in ids for item in sessions if item is not root):
         raise ValueError("missing child-parent native session")
-    if any((item["host_version"], item["model"], item["reasoning"]) !=
-           (root["host_version"], root["model"], root["reasoning"]) for item in sessions):
-        raise ValueError("native sessions differ in exact host/model configuration")
+    if any(item["host_version"] != root["host_version"] for item in sessions):
+        raise ValueError("native sessions differ in exact host version")
+    product = [item for item in sessions if item["session_role"].startswith("product-")]
+    guardians = [item for item in sessions if item["session_role"] == "review-guardian"]
+    if any((item["model"], item["reasoning"]) != (root["model"], root["reasoning"]) for item in product):
+        raise ValueError("native product sessions differ in exact model configuration")
+    product_ids = {item["session_id"] for item in product}
+    if any(item["parent_session_id"] not in product_ids for item in guardians):
+        raise ValueError("native guardian must belong to a product session")
+    by_id = {item["session_id"]: item for item in sessions}
+    for item in sessions:
+        current = item
+        ancestry = set()
+        while current is not root:
+            if current["session_id"] in ancestry or current["parent_session_id"] not in product_ids:
+                raise ValueError("native session ancestry must reach the product root")
+            ancestry.add(current["session_id"])
+            current = by_id[current["parent_session_id"]]
+    def tokens(items: list[dict[str, Any]], key: str) -> int:
+        return sum(item["usage"][key] for item in items)
     return {
         "preflight_only": True,
         "quality_claim": "unverified",
@@ -183,13 +219,20 @@ def extract_job(paths: Sequence[Path]) -> dict[str, Any]:
         "output_sha256": root["output_sha256"],
         "usage": {
             "complete": True,
-            "whole_job_tokens": sum(item["usage"]["input_tokens"] + item["usage"]["output_tokens"] for item in sessions),
+            "whole_job_tokens": tokens(sessions, "input_tokens") + tokens(sessions, "output_tokens"),
+            "product_tokens": tokens(product, "input_tokens") + tokens(product, "output_tokens"),
+            "review_tokens": tokens(guardians, "input_tokens") + tokens(guardians, "output_tokens"),
             "session_count": len(sessions),
+            "product_session_count": len(product),
+            "guardian_session_count": len(guardians),
             "model_calls": None,
-            "input_tokens": sum(item["usage"]["input_tokens"] for item in sessions),
-            "output_tokens": sum(item["usage"]["output_tokens"] for item in sessions),
+            "input_tokens": tokens(sessions, "input_tokens"),
+            "output_tokens": tokens(sessions, "output_tokens"),
+            "review_input_tokens": tokens(guardians, "input_tokens"),
+            "review_output_tokens": tokens(guardians, "output_tokens"),
         },
-        "tool_events": [event for item in sessions for event in item["tool_events"]],
+        "tool_events": [event for item in product for event in item["tool_events"]],
+        "review_tool_events": [event for item in guardians for event in item["tool_events"]],
         "tool_events_complete": True,
         "sessions": sessions,
     }

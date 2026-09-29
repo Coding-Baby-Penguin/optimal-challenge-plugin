@@ -124,7 +124,11 @@ def verify_skill_activation(stream: Path, installed_skill: Path, native_audit: d
 
 
 def validate_surface_audit(surface: dict, native: dict) -> list[str]:
-    if surface.get("surface_version") != 1 or surface.get("native_source") != "codex-cli-rollout-v1":
+    if (surface.get("surface_version") != 1 or surface.get("native_source") != "codex-cli-rollout-v1" or
+            surface.get("ambient_plugin_policy") !=
+            "retain-full-per-run-inventory-and-match-non-target-fingerprint-across-arms" or
+            surface.get("approval_guardian_policy") !=
+            "native-guardian-review-overhead-included-in-whole-job-tokens"):
         return ["CLI pilot surface pin is invalid"]
     for field in ("host", "host_source", "surface", "host_version", "model", "reasoning"):
         if native.get(field) != surface.get(field):
@@ -172,6 +176,65 @@ def verify_prelaunch_snapshot(plan_path: Path, pilot_manifest_path: Path) -> tup
         return None, ["prelaunch snapshot is missing or malformed"]
 
 
+def summarize_registry_inventory(registry: dict, target_id: str) -> tuple[dict | None, list[str]]:
+    """Retain all enabled plugin identities; a fresh home may sync account plugins."""
+    entries = registry.get("installed") if isinstance(registry, dict) else None
+    if not isinstance(entries, list) or not isinstance(target_id, str) or not target_id:
+        return None, ["per-run Codex registry inventory is malformed"]
+    seen: set[str] = set()
+    inventory = []
+    errors = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None, ["per-run Codex registry entry is malformed"]
+        fields = ("pluginId", "name", "version", "marketplaceName")
+        if any(not isinstance(entry.get(field), str) or not entry[field] for field in fields):
+            return None, ["per-run Codex registry identity is malformed"]
+        plugin_id = entry["pluginId"]
+        if plugin_id in seen:
+            return None, ["per-run Codex registry identity is duplicated"]
+        seen.add(plugin_id)
+        if not isinstance(entry.get("installed"), bool) or not isinstance(entry.get("enabled"), bool):
+            return None, ["per-run Codex registry state is malformed"]
+        source = entry.get("source")
+        if not isinstance(source, dict) or source.get("source") not in {"local", "remote"}:
+            return None, ["per-run Codex registry source is malformed"]
+        inventory.append({"plugin_id": plugin_id, "name": entry["name"],
+                          "version": entry["version"], "marketplace_name": entry["marketplaceName"],
+                          "source_kind": source["source"], "installed": entry["installed"],
+                          "enabled": entry["enabled"]})
+    inventory.sort(key=lambda item: item["plugin_id"])
+    enabled = [item for item in inventory if item["installed"] and item["enabled"]]
+    targets = [item for item in enabled if item["plugin_id"] == target_id]
+    if len(targets) != 1 or targets[0]["source_kind"] != "local":
+        errors.append("per-run registry lacks one installed enabled local target")
+    others = [item for item in inventory if item["plugin_id"] != target_id]
+    if any(item["source_kind"] == "local" for item in others):
+        errors.append("per-run registry contains a second local subject")
+    if errors:
+        return None, errors
+    ambient_bytes = json.dumps(others, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return {"status": "target_verified_with_shared_remote_plugins" if others else "target_exclusive",
+            "target_plugin_id": target_id, "full_inventory": inventory,
+            "other_installed_enabled": [item for item in others if item["installed"] and item["enabled"]],
+            "ambient_plugin_inventory_sha256": hashlib.sha256(ambient_bytes).hexdigest(),
+            "installed_enabled_count": len(enabled)}, []
+
+
+def compare_ambient_plugin_inventories(receipts: Sequence[dict]) -> list[str]:
+    """Require the same non-target plugin set for every arm in one pilot case."""
+    if not receipts:
+        return ["no per-run registry inventories to compare"]
+    fingerprints = []
+    for receipt in receipts:
+        inventory = receipt.get("registry_inventory") if isinstance(receipt, dict) else None
+        digest = inventory.get("ambient_plugin_inventory_sha256") if isinstance(inventory, dict) else None
+        if receipt.get("status") != "identity_activation_verified" or not isinstance(digest, str) or len(digest) != 64:
+            return ["comparison lacks a verified per-run ambient plugin inventory"]
+        fingerprints.append(digest)
+    return [] if len(set(fingerprints)) == 1 else ["ambient plugin inventory differs across arms"]
+
+
 def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: Path, subject_path: Path, source_root: Path, archive: Path,
                      installed_root: Path, registry_json: Path, registry_source: Path,
                      stream: Path, rollouts: Sequence[Path]) -> dict:
@@ -212,8 +275,9 @@ def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: P
     errors.extend(problems)
     registry_bytes = registry_json.read_bytes()
     registry = _strict_object(registry_bytes)
-    if len(registry.get("installed", [])) != 1:
-        errors.append("per-run registry must contain exactly one installed plugin")
+    inventory, problems = summarize_registry_inventory(
+        registry, f"{subject['plugin_name']}@{subject['marketplace_name']}")
+    errors.extend(problems)
     read_back, problems = verify_codex_registry_read_back(
         registry, name=subject["plugin_name"], version=subject["plugin_version"],
         marketplace_name=subject["marketplace_name"], expected_source=registry_source)
@@ -243,6 +307,7 @@ def verify_pilot_run(plan_path: Path, pilot_manifest_path: Path, surface_path: P
         "installed_member_count": identity["member_count"],
         "installed_member_map_sha256": _sha(json.dumps(members, sort_keys=True, separators=(",", ":")).encode("utf-8")),
         "registry_json_sha256": _sha(registry_bytes), "registry_identity": read_back,
+        "registry_inventory": inventory,
         "native": native, "activation": activation,
         "outer_whole_job_wall_seconds": None, "independent_grade": None,
     }
