@@ -1,5 +1,7 @@
 # Agent-Team Optimisation Implementation Plan
 
+> **Historical, superseded plan.** Use the current [holistic quality recovery plan](2026-09-29-holistic-quality-recovery.md) and [project state](../../PROJECT-STATE.md) for active work. The artifact pins, authority order, subagent instruction and checkboxes below describe the earlier plan and are not current execution guidance; the historical body is preserved for audit.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Release Optimal Challenge 1.2.0 as a lightweight, testable policy plugin that chooses when and how to use agent teams, budgets, questions, continuity, and independent review.

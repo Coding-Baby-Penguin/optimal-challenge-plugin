@@ -74,4 +74,4 @@ Budget tracking is policy and local ledger logic, not a promise of provider-side
 
 ## Release notes
 
-Version 1.2.0 adds explicit invocation choices, four cost/quality profiles, research-backed premise/delegation/review calculations, truthful allocation-ledger semantics, logical teammate continuity, selective independent review, fail-closed capability evidence, and pinned behavioral-evaluation contracts. Repository validation covers structure and policy invariants; fresh-host behavioral acceptance remains unverified until isolated Task 10 runs are recorded and compared with the v1.1 baseline.
+Version 1.2.0 adds explicit invocation choices, four cost/quality profiles, research-backed premise/delegation/review calculations, truthful allocation-ledger semantics, logical teammate continuity, selective independent review, fail-closed capability evidence, and pinned behavioral-evaluation contracts. Repository validation covers structure and policy invariants; fresh-host behavioral acceptance remains unverified until Task 9's isolated behavioral matrix is recorded and compared with the v1.1 baseline, followed by Task 10's independent scoring gate.
