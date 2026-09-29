@@ -200,11 +200,15 @@ check(not (ROOT / "hooks" / "hooks.json").exists(), "Plugin must not ship active
 # Inspect the selected tracked package set. Ignored virtual environments may
 # contain interpreter symlinks; they never enter the distributable archive.
 package_excludes = project_config.get("packaging", {}).get("excludes", []) if isinstance(project_config, dict) else []
+package_includes = project_config.get("packaging", {}).get("runtime_includes", []) if isinstance(project_config, dict) else []
 if not isinstance(package_excludes, list):
     errors.append("config/project.json packaging.excludes must be an array")
     package_excludes = []
+if not isinstance(package_includes, list) or not package_includes:
+    errors.append("config/project.json packaging.runtime_includes must be a non-empty array")
+    package_includes = []
 try:
-    iter_package_files(ROOT, package_excludes)
+    iter_package_files(ROOT, package_excludes, package_includes)
 except (OSError, ValueError) as exc:
     errors.append(f"Package selection: {exc}")
 

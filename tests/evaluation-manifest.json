@@ -18,7 +18,7 @@
     "collaboration"
   ],
   "profile": "balanced",
-  "config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
+  "candidate_policy_config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
   "evaluator_version": "1.0.0",
   "rubric_version": "1.1.0",
   "randomization": {
@@ -70,18 +70,32 @@
         "continuity": "v1.1-routing",
         "premise_gate": "v1.1-routing"
       },
-      "commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
+      "commit": "b4510c8de09c64bc9ecfff07574c0d350e3b6da4",
+      "commit_role": "associated-release-tag-not-exact-asset-source",
+      "source_kind": "published-release-asset",
+      "source_commit": null,
       "tag": "v1.1.0",
-      "archive_sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1",
+      "archive_sha256": "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44",
+      "policy_config_sha256": null,
+      "policy_config_source": "none-in-published-asset",
       "expected_manifest_version": "1.1.0",
-      "cachebuster": "baseline-c3c379ab",
-      "install_source": "isolated-local-archive",
+      "cachebuster": "baseline-published-f810f6bd",
+      "install_source": "official-github-release-asset",
       "identity_status": "unverified",
-      "installed_plugin_read_back": {
+      "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.1.0",
-        "cachebuster": "baseline-c3c379ab",
-        "archive_sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1"
+        "marketplace_name": "quality-A-local",
+        "archive_sha256": "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44"
+      },
+      "installed_plugin_read_back": {
+        "plugin_id": "optimal-challenge@quality-A-local",
+        "name": "optimal-challenge",
+        "version": "1.1.0",
+        "marketplace_name": "quality-A-local",
+        "installed": true,
+        "enabled": true,
+        "registry_evidence_sha256": "02bbb85786b17b21b196165254484040d4be2f8ff847ab1ca1f1f40ad5b24c73"
       }
     },
     {
@@ -97,16 +111,19 @@
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",
       "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "policy_config_sha256": "714788085dea4711d8560a7603bd9518aa552457adbbd5a18a01fddf3f3708ac",
+      "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
       "cachebuster": "candidate-93ff8725-arm-b",
       "install_source": "isolated-git-archive",
       "identity_status": "unverified-provisional-refresh-after-task-9",
-      "installed_plugin_read_back": {
+      "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
-        "cachebuster": "candidate-93ff8725-arm-b",
+        "marketplace_name": "quality-B-local",
         "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
-      }
+      },
+      "installed_plugin_read_back": null
     },
     {
       "arm_id": "C",
@@ -121,16 +138,19 @@
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",
       "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "policy_config_sha256": "714788085dea4711d8560a7603bd9518aa552457adbbd5a18a01fddf3f3708ac",
+      "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
       "cachebuster": "candidate-93ff8725-arm-c",
       "install_source": "isolated-git-archive",
       "identity_status": "unverified-provisional-refresh-after-task-9",
-      "installed_plugin_read_back": {
+      "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
-        "cachebuster": "candidate-93ff8725-arm-c",
+        "marketplace_name": "quality-C-local",
         "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
-      }
+      },
+      "installed_plugin_read_back": null
     },
     {
       "arm_id": "D",
@@ -145,16 +165,19 @@
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",
       "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "policy_config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
+      "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
       "cachebuster": "candidate-93ff8725-arm-d",
       "install_source": "isolated-git-archive",
       "identity_status": "unverified-provisional-refresh-after-task-9",
-      "installed_plugin_read_back": {
+      "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
-        "cachebuster": "candidate-93ff8725-arm-d",
+        "marketplace_name": "quality-D-local",
         "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
-      }
+      },
+      "installed_plugin_read_back": null
     }
   ],
   "claim_policy": {

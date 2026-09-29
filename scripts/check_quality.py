@@ -57,6 +57,19 @@ def release_gate(evidence_root):
         return {"status":"blocked","reasons":result.get("reasons",["Required current evidence is unverified"]) if isinstance(result,dict) else ["Invalid verifier result"]}
     return result
 
+def resolve_markdown_link(root, relative, target):
+    """Resolve reviewed B/C overlay links where they live in the built subject."""
+    parts=Path(relative).parts
+    if parts[:3]==("tests","subjects","overrides"):
+        if len(parts)==4 and parts[3] in {"B-SKILL.md","C-SKILL.md"}:
+            deployed=Path("skills/optimal-challenge/SKILL.md")
+        elif len(parts)>4 and parts[3] in {"B","C"}:
+            deployed=Path(*parts[4:])
+        else:
+            deployed=Path(relative)
+        return (root / deployed.parent / target).resolve()
+    return (root / relative).parent.joinpath(target).resolve()
+
 def repository_checks(root):
     """Inspect tracked text only; secret matches report paths, never contents."""
     result=subprocess.run(["git","ls-files","-z"],cwd=root,capture_output=True,check=True)
@@ -79,7 +92,7 @@ def repository_checks(root):
                 target=match.group(1).strip().split(' "',1)[0].strip("<>")
                 if not target or target.startswith(("#","/")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:",target): continue
                 target=target.split("#",1)[0]
-                resolved=(path.parent / target).resolve()
+                resolved=resolve_markdown_link(root,relative,target)
                 if not resolved.exists(): errors.append(f"Broken relative Markdown link: {relative} -> {target}")
     return errors
 

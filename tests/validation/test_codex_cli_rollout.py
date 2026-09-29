@@ -30,6 +30,7 @@ def _session(session: str, turn: str, *, parent: str | None = None, inherited: l
     if spawn:
         records.append(_record("response_item", type="function_call", name="spawn_agent",
                                namespace="collaboration", call_id="call-1", arguments="opaque"))
+        records.append(_record("response_item", type="function_call_output", call_id="call-1", output="opaque"))
     records += [_record("response_item", type="message", role="assistant", phase="final_answer",
                         content=[{"type": "output_text", "text": "done"}]),
                 _record("event_msg", type="token_count", info={"total_token_usage": {
@@ -41,6 +42,36 @@ def _session(session: str, turn: str, *, parent: str | None = None, inherited: l
 
 
 class CodexCliRolloutTests(unittest.TestCase):
+    def test_native_custom_tool_call_and_output_are_counted_without_inventing_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            records = _session("session", "turn")
+            records[3:3] = [
+                _record("response_item", type="custom_tool_call", id="item-1", status="completed",
+                        call_id="call-native", name="exec", input="opaque command arguments"),
+                _record("response_item", type="custom_tool_call_output", id="item-2",
+                        call_id="call-native", output="opaque tool output"),
+            ]
+            path = _write(Path(directory) / "custom.jsonl", records)
+            report = extract_job([path])
+            self.assertEqual(report["tool_events"], [{"type": "tool_call", "namespace": None,
+                                                       "name": "exec", "call_id": "call-native",
+                                                       "outcome": "unknown", "output_present": True}])
+            self.assertTrue(report["tool_events_complete"])
+            records.pop(4)
+            with self.assertRaisesRegex(ValueError, "missing.*output"):
+                extract_job([_write(path, records)])
+            records.insert(3, _record("response_item", type="custom_tool_call_output",
+                                      call_id="orphan", output="opaque"))
+            with self.assertRaisesRegex(ValueError, "orphan"):
+                extract_job([_write(path, records)])
+            records.pop(3)
+            records.insert(4, _record("response_item", type="custom_tool_call_output",
+                                      call_id="call-native", output="opaque"))
+            records.insert(5, _record("response_item", type="custom_tool_call_output",
+                                      call_id="call-native", output="opaque"))
+            with self.assertRaisesRegex(ValueError, "duplicate native tool output"):
+                extract_job([_write(path, records)])
+
     def test_child_inherited_parent_records_are_not_counted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

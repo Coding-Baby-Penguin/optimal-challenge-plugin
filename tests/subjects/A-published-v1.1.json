@@ -1,0 +1,60 @@
+{
+  "archive_sha256": "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44",
+  "arm_id": "A",
+  "cachebuster": "baseline-published-f810f6bd",
+  "critical_paths": [
+    ".codex-plugin/plugin.json",
+    "skills/optimal-challenge/SKILL.md",
+    "skills/optimal-challenge/references/context-management.md",
+    "skills/optimal-challenge/references/routing.md"
+  ],
+  "install_source": "official-github-release-asset",
+  "marketplace_name": "quality-A-local",
+  "member_sha256s": {
+    ".codex-plugin/plugin.json": "2ebe06c826de967907572b1942c865be2835730c3242809c3a2b7849bd75d41a",
+    "LICENSE": "65a8e5ccd99987603f397d3d92828a6059c7c7f5149774af9639233616840b63",
+    "PRIVACY.md": "d7ea7efa471f3b9a858e5809907cdd3cbf406215bdd2486ebc4159494b616671",
+    "README.md": "d6d2889195f7f72c21c93d3afa1277f8d8b7b5742eb1e744adc843b969904e9b",
+    "SUPPORT.md": "96345d2ecd22ee5ce8dab72781c7619ffa1522599096d1591444e4c339b084dd",
+    "TERMS.md": "8ed81003fdfc7de5b7fb27c5b994fe74c4453183eab00114b532952224882cc9",
+    "assets/icon.png": "304dc973e687e53cfcd0fe032408a0ddb2d1209ec459a02c450a2a5907cac23b",
+    "assets/logo.png": "1e80fb54b10cc7cac712ec8d35bdd415b28c9f664674c0d3ec2f14f5f84bf0ab",
+    "assets/optimal-challenge.svg": "51190a9624e1f28407d4e523b793e29154701a83f29bf7c7b17c2f51308c9c76",
+    "plugin.json": "72973d8d56ab883b46934b766e309051c03895d469ba5970c363ac12dba8b236",
+    "skills/optimal-challenge/SKILL.md": "6ed43da0ac739f109d5012b2799e1969e6b705f720a7c8b650fb7bde236ee361",
+    "skills/optimal-challenge/agents/openai.yaml": "9d4b18e86e1d15c241c6496256468cef9231f9083130c962ff446df70e68d6d0",
+    "skills/optimal-challenge/references/context-management.md": "4ecd7b3733e27b2b32cfb84bb8176d833971451a48ab4c8a90add31cc6b614f9",
+    "skills/optimal-challenge/references/delegation-budget.md": "54cff0b50292a8ccb3f36de0d80a78a5b5491b5d362a4104a52c419739f91e81",
+    "skills/optimal-challenge/references/environment-storage.md": "1b38e9f3caef45800fa27c08efebb29a90dcf0ead06b863e477fb736528e0f1e",
+    "skills/optimal-challenge/references/evolution-policy.md": "f9054686756ba53beec81563ccbae2112a78b7e5cdf5bff5f98dabaa4de484cc",
+    "skills/optimal-challenge/references/pattern-promotion.md": "82899a6a438c9336764ad3d988f0d4389ca65859d3854d3e20b0aacc17afdbce",
+    "skills/optimal-challenge/references/platform-claude.md": "f0e09d7151c20536fbcb53a81ecda419324a934c8d173f5f497e0a855f1ac6d7",
+    "skills/optimal-challenge/references/platform-codex.md": "2aea6f4f51b219dfdd2849dc3556e6e3ea358c1bef0bf2dadfb9ef544896c0be",
+    "skills/optimal-challenge/references/preference-model.md": "2c9ea157f9c44deb4e10cead00215f170049b2b259dc9d11342f0b28458ca367",
+    "skills/optimal-challenge/references/reality-model.md": "f26bd64a5f4fd6d9db41a90be970ff4607c41d212a078fc811c533c5a4d2b1b9",
+    "skills/optimal-challenge/references/routing.md": "69a01b6065e7439e8b757a22b566bc296a1248323b2868f1e41817562e7973de",
+    "skills/optimal-challenge/references/side-effects.md": "4da3e4d152e92167c759ba1022a440ac4ad399e65db4fbe29539ba798f32895f",
+    "skills/optimal-challenge/references/simplification.md": "40b9e73e7623ed907e7d1e39016cb85408b6dba4aebb60d4232f478d94127299",
+    "skills/optimal-challenge/references/verification.md": "8350852bbefba26a079098994194af008d070bf625bf2edfb74c21a23063f77f",
+    "skills/optimal-challenge/templates/CHARTER.md": "11d6ed4ef727f1471f89171405cbcf7dd61d703f9d7fac93b95462fa73bb9e2a",
+    "skills/optimal-challenge/templates/DECISIONS.md": "fb02769335be844699a21750dcfffc8419fbeadcc03c5a6290ef8f4d0d4aec48",
+    "skills/optimal-challenge/templates/EVOLUTION.md": "d8835b571a7458542c8d14c6a9dbbff4e6e545e4d3bea6b4e3d8ea06a39e728c",
+    "skills/optimal-challenge/templates/PATTERNS.md": "4812b86690b914f11f5ee9b338bfa0350e8dd05705b3d54d015090f06d395d79",
+    "skills/optimal-challenge/templates/PREFERENCES.yaml": "afbfc153bd33a6852e03fc56dc2cd8692228271089021f968a6ef98e20bbcdaf",
+    "skills/optimal-challenge/templates/STATE.md": "97d8ac6fdd97578d64e9b4cd0ffeaf5f9c91be01d1e79ac13436bfd0a36e63de",
+    "skills/optimal-challenge/templates/task-capsule.yaml": "4e20db297f5efef3e6f242df12e111d2a9b62853eb488dcd7c693922464a3a42"
+  },
+  "plugin_name": "optimal-challenge",
+  "plugin_version": "1.1.0",
+  "source_identity": {
+    "tag_commit": "b4510c8de09c64bc9ecfff07574c0d350e3b6da4",
+    "release_asset_sha256": "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44",
+    "tag": "v1.1.0",
+    "tag_tree_mismatched_members": [
+      ".codex-plugin/plugin.json",
+      "LICENSE"
+    ]
+  },
+  "source_kind": "published-release-asset",
+  "subject_version": 1
+}

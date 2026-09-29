@@ -37,6 +37,41 @@ def _records(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _tool_events(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pair native tool attempts with their outputs without exposing payloads."""
+    calls: dict[str, dict[str, Any]] = {}
+    events: list[dict[str, Any]] = []
+    for record in records:
+        if record.get("type") != "response_item":
+            continue
+        item = record["payload"]
+        kind = item.get("type")
+        if kind not in {"function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"}:
+            continue
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError("native tool event lacks a call identity")
+        if kind in {"function_call", "custom_tool_call"}:
+            name = item.get("name")
+            namespace = item.get("namespace")
+            if (call_id in calls or not isinstance(name, str) or not name or
+                    (namespace is not None and not isinstance(namespace, str))):
+                raise ValueError("duplicate or malformed native tool call")
+            event = {"type": "spawn_agent" if namespace == "collaboration" and name == "spawn_agent" else "tool_call",
+                     "namespace": namespace, "name": name, "call_id": call_id,
+                     "outcome": "unknown", "output_present": False}
+            calls[call_id] = event
+            events.append(event)
+        else:
+            event = calls.get(call_id)
+            if event is None or event["output_present"]:
+                raise ValueError("orphan or duplicate native tool output")
+            event["output_present"] = True
+    if any(not event["output_present"] for event in events):
+        raise ValueError("native tool call is missing its output")
+    return events
+
+
 def extract_rollout(path: Path) -> dict[str, Any]:
     """Read one session's own events, excluding inherited fork history."""
     path = Path(path)
@@ -85,11 +120,7 @@ def extract_rollout(path: Path) -> dict[str, Any]:
         raise ValueError("native usage is incomplete or malformed")
     if usage["cached_input_tokens"] > usage["input_tokens"] or usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]:
         raise ValueError("native usage totals are inconsistent")
-    calls = [r["payload"] for r in own if r.get("type") == "response_item"
-             and r["payload"].get("type") == "function_call"]
-    tool_events = [{"type": "spawn_agent" if c.get("namespace") == "collaboration" and c.get("name") == "spawn_agent" else "tool_call",
-                    "namespace": c.get("namespace"), "name": c.get("name"), "call_id": c.get("call_id")}
-                   for c in calls]
+    tool_events = _tool_events(own)
     finals = [r["payload"] for r in own if r.get("type") == "response_item"
               and r["payload"].get("type") == "message"
               and r["payload"].get("role") == "assistant"

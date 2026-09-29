@@ -14,9 +14,9 @@
 
 ## Description
 
-Optimal Challenge handles simple tasks directly and forms a cost-aware agent team only when evidence says the added coordination is worthwhile. Users can choose inline-only, automatic, team-requested, or an exact specialist count; select Economy, Balanced, Quality, or Custom tradeoffs; and set a unit-labelled budget ceiling. The plugin investigates cheap facts before asking, bundles material decisions with recommended defaults, preserves logical teammate continuity from compact evidence, and selects independent review by consequence and expected value.
+Optimal Challenge provides policy and local helpers for direct work, selective agent delegation, evidence-backed decisions, and review. Users can request inline-only, automatic, team-requested, or an exact specialist count; select Economy, Balanced, Quality, or Custom tradeoffs; and set a unit-labelled advisory budget ceiling. Its instructions call for investigating cheap facts before asking, bundling material decisions, preserving logical teammate continuity from compact evidence, and selecting review by consequence and expected value. These behaviors have structural validation; comparative fresh-host behavior remains unverified until isolated acceptance runs complete.
 
-Budget tracking is policy and local ledger logic, not a promise of provider-side enforcement. The default is advisory. Enforced limits require fresh, exact-surface observed usage and a verified matching stop primitive. Unsupported capabilities, incomplete work, and unverified host behavior remain visibly `Blocked`, `Partial`, or `Degraded`.
+Budget tracking is policy and local ledger logic, not a promise of provider-side enforcement. The default is advisory. Enforced limits require fresh, exact-surface observed usage and a verified matching stop primitive. The policy requires unsupported capabilities and incomplete work to be reported visibly as `Blocked`, `Partial`, or `Degraded`; fresh-host compliance is still under evaluation.
 
 ## Starter prompts
 
@@ -24,7 +24,7 @@ Budget tracking is policy and local ledger logic, not a promise of provider-side
 2. Continue implementing the plan we approved earlier.
 3. Use two independent specialists, a Quality profile, and a 20,000-token advisory ceiling for this review.
 
-## Capabilities
+## Intended behavior under evaluation
 
 - Assess task complexity before selecting a workflow.
 - Reuse an applicable plan from the current thread.

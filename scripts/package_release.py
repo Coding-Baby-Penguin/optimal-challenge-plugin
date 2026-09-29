@@ -57,6 +57,19 @@ def _matches_exclude(
     return False
 
 
+def _matches_runtime_include(relative: str, includes: Sequence[str]) -> bool:
+    """Match exact root paths or explicit rooted directory prefixes only."""
+    for pattern in includes:
+        normalized = pattern.replace("\\", "/").strip("/")
+        if normalized.endswith("/**"):
+            prefix = normalized[:-3]
+            if relative.startswith(prefix + "/"):
+                return True
+        elif relative == normalized:
+            return True
+    return False
+
+
 def _is_safe_example(relative: str) -> bool:
     name = PurePosixPath(relative).name.lower()
     return name == ".env.example" or name.startswith("credentials.example.")
@@ -91,7 +104,7 @@ def _validate_tracked_name(relative: str) -> PurePosixPath:
     return pure
 
 
-def iter_package_files(root: Path, excludes: Sequence[str]) -> list[Path]:
+def iter_package_files(root: Path, excludes: Sequence[str], includes: Sequence[str] | None = None) -> list[Path]:
     """Return selected Git-tracked files in stable POSIX-path order."""
 
     root = root.resolve()
@@ -117,6 +130,8 @@ def iter_package_files(root: Path, excludes: Sequence[str]) -> list[Path]:
         safe_example = _is_safe_example(relative)
         if _is_sensitive_path(relative) and (not safe_example or _has_sensitive_suffix(relative)):
             raise ValueError(f"sensitive tracked path is forbidden in release package: {relative}")
+        if includes is not None and not _matches_runtime_include(relative, includes):
+            continue
         ignored_patterns = SAFE_EXAMPLE_EXCLUDE_PATTERNS if safe_example else frozenset()
         if _matches_exclude(relative, excludes, ignored_patterns):
             continue
@@ -126,6 +141,13 @@ def iter_package_files(root: Path, excludes: Sequence[str]) -> list[Path]:
         if not candidate.is_file():
             raise ValueError(f"tracked package member is missing or non-regular: {relative}")
         selected.append(candidate)
+
+    if includes is not None:
+        missing = [pattern for pattern in includes if not any(
+            _matches_runtime_include(_relative_posix(root, path), [pattern]) for path in selected
+        )]
+        if missing:
+            raise ValueError(f"unmatched runtime include: {missing!r}")
 
     return sorted(selected, key=lambda path: _relative_posix(root, path))
 
@@ -276,13 +298,16 @@ def main() -> int:
         if not isinstance(packaging, dict) or not isinstance(packaging.get("excludes"), list):
             raise ValueError("config/project.json packaging.excludes must be a list")
         excludes = packaging["excludes"]
+        includes = packaging.get("runtime_includes")
         if not all(isinstance(pattern, str) and pattern.strip() for pattern in excludes):
             raise ValueError("config/project.json packaging.excludes entries must be non-empty strings")
+        if not isinstance(includes, list) or not includes or not all(isinstance(pattern, str) and pattern.strip() for pattern in includes):
+            raise ValueError("config/project.json packaging.runtime_includes must contain non-empty patterns")
         if not isinstance(paths, dict) or not isinstance(paths.get("package"), str):
             raise ValueError("config/project.json paths.package must be a string")
 
         output = ROOT / paths["package"]
-        files = iter_package_files(ROOT, excludes)
+        files = iter_package_files(ROOT, excludes, includes)
         digest = build_archive(ROOT, output, files)
         errors = compare_archive(ROOT, output, files)
         if errors:

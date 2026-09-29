@@ -1,16 +1,32 @@
 {
   "schema_version": 1,
   "arm_id": "A",
-  "subject_commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
+  "release_tag_commit": "b4510c8de09c64bc9ecfff07574c0d350e3b6da4",
   "subject_tag": "v1.1.0",
+  "selected_subject_manifest": "tests/subjects/A-published-v1.1.json",
+  "source_kind": "published-release-asset",
   "status": "unverified",
-  "archive_sha256": null,
+  "archive_sha256": "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44",
   "cachebuster": null,
   "manifest_sha256": null,
-  "installed_plugin_read_back": null,
+  "subject_manifest_sha256": "a3eaffb246c270bd14602df9659544edd3b73e4d3acafbbb02a4f2846f2721d3",
+  "installed_plugin_read_back": {
+    "name": "optimal-challenge",
+    "version": "1.1.0",
+    "marketplace_name": "quality-A-local",
+    "enabled": true,
+    "exact_member_count": 32,
+    "registry_read_back_sha256": "02bbb85786b17b21b196165254484040d4be2f8ff847ab1ca1f1f40ad5b24c73"
+  },
   "raw_result_ids": [],
   "aggregate": null,
   "comparative_claims_allowed": false,
-  "reason": "Task 10 preflight found the exact 51bab08e archive, but four archive members differ from pinned commit c3c379ab, the remote v1.1.0 tag targets b4510c8, and no baseline-c3c379ab installation read-back exists; no behavioral run was valid.",
-  "next_action": "Reconcile one immutable v1.1 commit, tag, and archive identity, then install it with the pinned cachebuster and run the matrix in fresh disposable tasks before recording any comparison."
+  "reason": "The actual published v1.1.0 release asset is A's byte identity. Its 32 members differ from tag commit b4510c8 in .codex-plugin/plugin.json and LICENSE; it is not the tag tree. An isolated Codex plugin registry reported quality-A-local installed/enabled at v1.1.0, and all 32 installed cache members matched the asset. The arbitrary cachebuster evaluation label is not exposed by the registry. Fresh comparative behavior remains unverified.",
+  "historical_local_archive": {
+    "sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1",
+    "member_count": 47,
+    "previously_pinned_commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
+    "mismatched_members_against_previous_commit": [".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "docs/PROJECT-STATE.md", "LICENSE"]
+  },
+  "next_action": "Retain the exact A installation and registry receipts, establish native skill invocation for disposable tasks, and run shared A/B/C/D tasks before recording any comparison."
 }

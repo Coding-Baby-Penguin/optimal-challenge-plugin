@@ -7,9 +7,10 @@ Tool-required manifests remain at the repository root or their mandated discover
 ## Deterministic release packaging
 
 Run `python scripts/package_release.py` to build the archive named by
-`paths.package`. The Git index is the allowlist: untracked dirty-tree files are
-never candidates. The packager filters tracked paths using
-`packaging.excludes`, writes them in sorted ASCII POSIX-path order with the
+`paths.package`. Only tracked paths matching `packaging.runtime_includes` can
+enter the archive; `packaging.excludes` removes sensitive and local paths even
+if an include matches. Untracked dirty-tree files are never candidates. The
+packager writes selected files in sorted ASCII POSIX-path order with the
 compression-independent `ZIP_STORED` method, a fixed 1980-01-01 timestamp,
 empty optional metadata, and regular-file `0644` permissions. It then reopens
 the ZIP and compares exact order, metadata, names, and every selected byte with
@@ -24,16 +25,20 @@ key formats. A tracked sensitive path fails packaging instead of disappearing
 silently. The only sensitive-name exceptions are exactly `.env.example` and
 `credentials.example.*`; these documented placeholders remain eligible when
 tracked, but never override excluded directories or a key-file suffix.
-Portable,
-Codex, and Claude manifests; runtime skills and templates; committed schemas
-and defaults; public documentation/legal/support files; validators; sanitized
-evaluation fixtures; and distributable validation tests remain in the archive.
+Portable, Codex, and Claude manifests; runtime skills and references; runtime
+schemas/defaults; public README/legal/support files; and the command-line
+helpers referenced by the skill remain in the archive. Development tests,
+evaluation fixtures, release verification scripts, project checkpoints and
+submission drafts stay in the source repository. The packaged orchestration
+validator uses the standard library and runs from an external task directory
+without development dependencies; the source test suite uses pinned
+`jsonschema` and PyYAML to check its shape guard against the declared schema.
 Fresh-host acceptance remains `UNVERIFIED` until Task 10 records isolated runs;
 an archive hash proves artifact identity, not host-model behavior.
-The shipped evaluation manifest cannot embed its own SHA-256 without changing
-the archive it identifies. Task 9 therefore reports the deterministic hash as
-external build evidence and keeps candidate arms explicitly provisional. Task
-10 pins and verifies the installed subject during isolated host runs; packaging
+The evaluation manifest is external to the runtime archive: embedding an
+archive SHA-256 in that archive would change the bytes it identifies. Task 7
+records each deterministic hash in an external subject manifest. Task 10 pins
+and verifies the installed final subject during isolated host runs; packaging
 must not rewrite provisional identity into a false verified claim.
 
 ## Precedence

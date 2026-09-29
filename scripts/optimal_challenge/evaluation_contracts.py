@@ -37,7 +37,7 @@ PINNED_FIELDS = (
     "reasoning",
     "tool_set",
     "profile",
-    "config_sha256",
+    "candidate_policy_config_sha256",
     "evaluator_version",
     "rubric_version",
     "randomization",
@@ -56,7 +56,12 @@ CANONICAL_FILES = {
     ("prompt_hashes", "question_bundle"): ROOT / "skills" / "optimal-challenge" / "templates" / "QUESTION-BUNDLE.md",
     ("fixture_hashes", "behavioral_acceptance"): ROOT / "tests" / "behavioral-acceptance.json",
     ("fixture_hashes", "team_routing"): ROOT / "tests" / "team-routing.json",
-    (None, "config_sha256"): ROOT / "config" / "orchestration.json",
+    (None, "candidate_policy_config_sha256"): ROOT / "config" / "orchestration.json",
+}
+ARM_CONFIG_FILES = {
+    "B": ROOT / "tests" / "subjects" / "overrides" / "B" / "config" / "orchestration.json",
+    "C": ROOT / "tests" / "subjects" / "overrides" / "C" / "config" / "orchestration.json",
+    "D": ROOT / "config" / "orchestration.json",
 }
 APPROVED_BEHAVIORAL_FIXTURE_VERSION = 2
 APPROVED_BEHAVIORAL_FIXTURE_SHA256 = "a4dea28161fc5a593fda9ee9af5686750c337fae849daaf4262fd15ff5fb290e"
@@ -153,8 +158,8 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
                 "canonical behavioral_acceptance differs from the independently approved behavioral fixture "
                 f"v{APPROVED_BEHAVIORAL_FIXTURE_VERSION}"
             )
-    if not _is_sha256(manifest.get("config_sha256")):
-        errors.append("manifest.config_sha256 must be a lowercase SHA-256 hash")
+    if not _is_sha256(manifest.get("candidate_policy_config_sha256")):
+        errors.append("manifest.candidate_policy_config_sha256 must be a lowercase SHA-256 hash")
     for field in ("host", "surface", "model", "reasoning", "profile", "evaluator_version", "rubric_version"):
         if not _is_text(manifest.get(field)):
             errors.append(f"manifest.{field} must be a non-empty string")
@@ -211,13 +216,37 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
                     errors.append(f"manifest.arms[{index}].{field} must be a non-empty string")
             if not _is_sha256(arm.get("archive_sha256")):
                 errors.append(f"manifest.arms[{index}].archive_sha256 must be a lowercase SHA-256 hash")
+            if arm_id == "A":
+                if arm.get("policy_config_sha256") is not None or arm.get("policy_config_source") != "none-in-published-asset":
+                    errors.append("manifest arm A must record no packaged machine config")
+            elif not _is_sha256(arm.get("policy_config_sha256")) or arm.get("policy_config_source") != "packaged-config":
+                errors.append(f"manifest.arms[{index}].policy_config_sha256 must pin packaged policy")
+            elif isinstance(arm_id, str) and arm_id in ARM_CONFIG_FILES:
+                try:
+                    actual_config = _file_sha256(ARM_CONFIG_FILES[arm_id])
+                except OSError as exc:
+                    errors.append(f"arm {arm_id} policy config cannot be read: {exc}")
+                else:
+                    if arm["policy_config_sha256"] != actual_config:
+                        errors.append(f"manifest.arms[{index}].policy_config_sha256 differs from arm {arm_id} policy config")
             if not _is_text(arm.get("identity_status")):
                 errors.append(f"manifest.arms[{index}].identity_status must be explicit")
             if _is_text(arm_id) and arm_id in ARM_POLICIES and arm.get("policy_overrides") != ARM_POLICIES[arm_id]:
                 errors.append(f"manifest.arms[{index}].policy_overrides does not match arm {arm_id}")
-            read_back = _mapping(arm.get("installed_plugin_read_back"))
-            if not read_back:
-                errors.append(f"manifest.arms[{index}].installed_plugin_read_back is required")
+            expectation = _mapping(arm.get("install_expectation"))
+            if not expectation or any(not _is_text(expectation.get(field)) for field in ("name", "version", "marketplace_name")):
+                errors.append(f"manifest.arms[{index}].install_expectation is required")
+            elif expectation.get("archive_sha256") != arm.get("archive_sha256"):
+                errors.append(f"manifest.arms[{index}].install_expectation archive differs from arm identity")
+            observed = arm.get("installed_plugin_read_back")
+            if observed is not None:
+                read_back = _mapping(observed)
+                if not read_back or any(read_back.get(field) != expectation.get(field) for field in ("name", "version", "marketplace_name")):
+                    errors.append(f"manifest.arms[{index}].installed_plugin_read_back differs from installation expectation")
+                elif (read_back.get("plugin_id") != f"{expectation['name']}@{expectation['marketplace_name']}" or
+                      read_back.get("installed") is not True or read_back.get("enabled") is not True or
+                      not _is_sha256(read_back.get("registry_evidence_sha256"))):
+                    errors.append(f"manifest.arms[{index}].installed_plugin_read_back lacks observed registry identity")
         if sorted(arm_ids) != ["A", "B", "C", "D"]:
             errors.append("manifest.arms must define each of A, B, C, and D exactly once")
     return errors
@@ -292,15 +321,14 @@ def _validate_bundle_header(
                 errors.append(f"bundle.subject {field} does not match pinned plugin identity")
         if subject.get("policy_overrides") != expected_arm.get("policy_overrides") or bundle.get("arm_policy") != expected_arm.get("policy_overrides"):
             errors.append("bundle.subject arm policy does not match the pinned ablation")
-        expected_read_back = _mapping(expected_arm.get("installed_plugin_read_back")) or {}
-        read_back = _mapping(subject.get("installed_plugin_read_back"))
-        if read_back is None:
-            errors.append("bundle.subject installed plugin read-back is required")
-        else:
-            for field in ("name", "version", "cachebuster", "archive_sha256"):
-                if read_back.get(field) != expected_read_back.get(field):
-                    label = "plugin version" if field == "version" else field
-                    errors.append(f"bundle.subject installed {label} read-back mismatch")
+        if subject.get("policy_config_sha256") != expected_arm.get("policy_config_sha256"):
+            errors.append("bundle.subject config fingerprint does not match pinned arm policy")
+        if subject.get("policy_config_source") != expected_arm.get("policy_config_source"):
+            errors.append("bundle.subject config status does not match pinned arm policy")
+        if subject.get("install_expectation") != expected_arm.get("install_expectation"):
+            errors.append("bundle.subject installation expectation does not match pinned arm")
+        if subject.get("installed_plugin_read_back") != expected_arm.get("installed_plugin_read_back"):
+            errors.append("bundle.subject installed plugin read-back mismatch")
         verification = _mapping(bundle.get("identity_verification"))
         expected_status = expected_arm.get("identity_status")
         if verification is None:
@@ -334,13 +362,18 @@ def _validate_isolation(
             errors.append(f"bundle isolation {label} requirement failed")
     if isolation.get("prior_arm_state_detected") is not False:
         errors.append("bundle isolation ledger/cache prior-arm state leakage detected")
-    for field in ("task_fingerprint", "cache_fingerprint", "artifact_fingerprint", "registry_fingerprint", "ledger_fingerprint", "config_fingerprint"):
+    for field in ("task_fingerprint", "cache_fingerprint", "artifact_fingerprint", "registry_fingerprint", "ledger_fingerprint"):
         if not _is_sha256(isolation.get(field)):
             errors.append(f"bundle isolation {field.replace('_', ' ')} must be a SHA-256 fingerprint")
     if expected_arm is not None and isolation.get("artifact_fingerprint") != expected_arm.get("archive_sha256"):
         errors.append("bundle isolation artifact fingerprint does not match pinned subject")
-    if isolation.get("config_fingerprint") != manifest.get("config_sha256"):
+    if expected_arm is not None and isolation.get("policy_config_fingerprint") != expected_arm.get("policy_config_sha256"):
         errors.append("bundle isolation config fingerprint mismatch")
+    if expected_arm is not None:
+        if expected_arm.get("policy_config_source") == "packaged-config" and not _is_sha256(isolation.get("policy_config_fingerprint")):
+            errors.append("bundle isolation packaged config fingerprint is missing")
+        if isolation.get("policy_config_source") != expected_arm.get("policy_config_source"):
+            errors.append("bundle isolation config status mismatch")
     if not _sanitized_ref(isolation.get("environment_evidence_id")):
         errors.append("bundle isolation environment evidence is required")
     randomization = _mapping(manifest.get("randomization")) or {}

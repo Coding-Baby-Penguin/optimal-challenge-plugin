@@ -5,6 +5,15 @@ from pathlib import Path
 import yaml
 
 class QualityRunnerTests(unittest.TestCase):
+    def test_overlay_markdown_links_resolve_in_deployed_subject_layout(self):
+        from scripts.check_quality import resolve_markdown_link
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(
+            resolve_markdown_link(root, "tests/subjects/overrides/B-SKILL.md", "references/routing.md"),
+            root / "skills/optimal-challenge/references/routing.md",
+        )
+        self.assertFalse(resolve_markdown_link(root, "tests/subjects/overrides/B-SKILL.md", "references/nonexistent-policy.md").exists())
+
     def test_hosted_workflow_parses_and_runs_structural_gate_on_both_platforms(self):
         workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/quality.yml").read_text(encoding="utf-8"))
         job = workflow["jobs"]["structural"]

@@ -67,7 +67,7 @@ The committed default is advisory. An advisory ceiling stops the next discretion
 
 ## Continuity and selective review
 
-Each specialist has a logical identity separate from a provider session. The coordinator chooses among native resume, rehydrating the same logical role from a compact capsule, or a fresh independent worker. Every handoff preserves the user-controlled root goal, states the local contribution and stop condition, and returns only the goal-relevant delta. Source, tests, explicit decisions, and [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) outrank registry or conversation memory. Disposable registry/ledger state stays under ignored `.optimal-challenge/`; raw transcripts, secrets, and sensitive traits do not enter committed capsules.
+Each specialist has a logical identity separate from a provider session. The coordinator chooses among native resume, rehydrating the same logical role from a compact capsule, or a fresh independent worker. Every handoff preserves the user-controlled root goal, states the local contribution and stop condition, and returns only the goal-relevant delta. Source, tests, explicit decisions, and the [repository project state](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/docs/PROJECT-STATE.md) outrank registry or conversation memory. Disposable registry/ledger state stays under ignored `.optimal-challenge/`; raw transcripts, secrets, and sensitive traits do not enter committed capsules.
 
 Review is selective: `ReviewValue = P(defect) × Impact × P(review detects defect) − ReviewCost`. Strong deterministic oracles handle reversible mechanical work; a fresh reviewer handles material judgment when value clears the profile margin. Consequential weak-oracle work can require independent review. If that reviewer is unavailable, the plugin reports `Blocked`, or `Degraded` only after an accepted named compensating oracle—never silent self-approval.
 
@@ -94,9 +94,13 @@ There is no universal best tree. The planner first identifies ecosystem conventi
 
 This repository applies that rule by keeping its package-validation suite under `tests/validation/`. Small projects remain shallow when their ecosystem expects it; folders are introduced only for tool discovery, a distinct lifecycle or boundary, or concrete near-term expansion.
 
-Maintainers can start at the [repository guide](docs/README.md) for owner maps, contribution checks, and evidence boundaries.
+Maintainers can start at the [repository guide](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/docs/README.md) for owner maps, contribution checks, and evidence boundaries.
 
-## Package layout
+## Source repository layout
+
+The release archive contains the manifests, runtime skills/references, runtime
+schemas/defaults and helpers. Development tests, evaluation evidence and project
+checkpoints below remain in the source repository.
 
 ```text
 optimal-challenge/
@@ -136,7 +140,7 @@ optimal-challenge/
 ### OpenAI / Codex-compatible plugin
 This repository contains a local Codex marketplace at `.agents/plugins/marketplace.json`. From PowerShell, set the checkout path once, then add the marketplace and install its plugin:
 
-For development, use an isolated host home and a clean extracted release archive as `$repoPath`. A marketplace install directly from a working checkout can copy ignored scratch files and `.git` into the plugin cache. The [contributor guide](docs/CONTRIBUTING.md) describes the archive and identity checks before release.
+For development, use an isolated host home and a clean extracted release archive as `$repoPath`. A marketplace install directly from a working checkout can copy ignored scratch files and `.git` into the plugin cache. The [contributor guide](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/docs/CONTRIBUTING.md) describes the archive and identity checks before release.
 
 ```powershell
 $repoPath = "C:\path\to\optimal-challenge-plugin"
@@ -211,7 +215,7 @@ The 1.1-to-1.2 compatibility contract is intentionally additive:
 - `docs/PROJECT-STATE.md` remains the only canonical project state; upgrading creates no second checkpoint or roadmap.
 - Fresh-host behavioral acceptance remains `UNVERIFIED` until isolated Task 10 runs pass. The version bump and repository tests do not establish observed host support or provider budget enforcement.
 
-## Validate
+## Validate the source checkout
 
 ```bash
 python scripts/validate.py
@@ -221,11 +225,11 @@ python scripts/evaluate_routing.py tests/team-routing.json
 python scripts/evaluate_research_gate.py tests/research-gate.json --evidence-registry tests/fixtures/research/trusted-evidence.json
 ```
 
-Use Python 3.12 and install pinned development-only schema dependencies from `requirements-dev.txt` into a disposable target as shown in [`config/README.md`](config/README.md). The integrated validator checks manifest consistency, routing calculations, valid orchestration state, capability contracts, behavioral fixture identity, skill/reference integrity, and the absence of active components. It reports fresh-host behavioral acceptance as `UNVERIFIED` until Task 10 supplies isolated recorded runs; structural success is not host-model proof.
+Use Python 3.12 and install pinned development-only schema dependencies from `requirements-dev.txt` into a disposable target as shown in the [source configuration guide](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/config/README.md). The integrated validator checks manifest consistency, routing calculations, valid orchestration state, capability contracts, behavioral fixture identity, skill/reference integrity, and the absence of active components. The packaged `scripts/validate_orchestration.py` needs only the Python standard library. Structural success is not host-model proof; fresh-host behavior requires separately recorded isolated runs.
 
 ## Configuration
 
-Project-maintenance values are defined once in [`config/project.json`](config/project.json) and documented in [`config/README.md`](config/README.md). Platform-required manifests remain in their required locations and are validated against that central configuration. Real secrets never belong in committed configuration.
+Project-maintenance values are defined once in the source repository's [project configuration](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/config/project.json) and documented in its [configuration guide](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/config/README.md). Platform-required manifests remain in their required locations and are validated against that central configuration. Real secrets never belong in committed configuration.
 
 The supported one-line programmatic task override is:
 
@@ -247,7 +251,7 @@ No active hooks, MCP servers, monitors, or background services are included in v
 
 Use the templates only when persistent multi-pass work needs them. Do not load all state files into every task.
 
-- Local repo/Codex: keep current state and the development path together in [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md). Rewrite it at meaningful milestones; do not create parallel checkpoint or roadmap files.
+- Local repo/Codex: keep current state and the development path together in the [source project state](https://github.com/Coding-Baby-Penguin/optimal-challenge-plugin/blob/main/docs/PROJECT-STATE.md). Rewrite it at meaningful milestones; do not create parallel checkpoint or roadmap files.
 - Cloud/project chat: store only durable project state in project/cloud files; treat individual chats as disposable working contexts.
 
 On resume, compare the project-state file with the source tree and current version-control state before acting. Source and tests remain authoritative if recorded state has become stale.

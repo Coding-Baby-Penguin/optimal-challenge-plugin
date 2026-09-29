@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import struct
@@ -192,6 +193,15 @@ class ReleasePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sensitive tracked path"):
             iter_package_files(self.root, [".env", ".env.*", "credentials.*"])
 
+    def test_runtime_allowlist_cannot_hide_tracked_sensitive_paths_or_missing_members(self):
+        (self.root / "credentials.live.json").write_text("{}", encoding="utf-8")
+        self._git("add", "-f", "credentials.live.json")
+        with self.assertRaisesRegex(ValueError, "sensitive tracked path"):
+            iter_package_files(self.root, ["credentials.*"], ["a.txt"])
+        self._git("rm", "--cached", "-q", "credentials.live.json")
+        with self.assertRaisesRegex(ValueError, "unmatched runtime include"):
+            iter_package_files(self.root, [], ["a.txt", "scripts/missing.py"])
+
     def test_iter_package_files_rejects_included_symlink(self):
         link = self.root / "linked.txt"
         try:
@@ -375,21 +385,84 @@ class ReleasePackageTests(unittest.TestCase):
             "**/__pycache__/**",
             "tests/raw/**",
             "tests/results/**",
+            "tests/subjects/**",
         }:
             self.assertIn(pattern, exclusions)
 
     def test_repository_release_archive_matches_selected_source_exactly(self):
         project = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))
-        files = iter_package_files(ROOT, project["packaging"]["excludes"])
+        files = iter_package_files(ROOT, project["packaging"]["excludes"], project["packaging"]["runtime_includes"])
         archive = ROOT / project["paths"]["package"]
         sha256 = build_archive(ROOT, archive, files)
 
         self.assertRegex(sha256, r"^[0-9a-f]{64}$")
         self.assertEqual(compare_archive(ROOT, archive, files), [])
 
+    def test_runtime_package_closes_skill_references_without_shipping_mutable_evidence(self):
+        project = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))
+        files = iter_package_files(ROOT, project["packaging"]["excludes"], project["packaging"]["runtime_includes"])
+        selected = {path.relative_to(ROOT).as_posix() for path in files}
+        for required in (
+            ".codex-plugin/plugin.json", ".claude-plugin/plugin.json", "plugin.json",
+            "skills/optimal-challenge/SKILL.md", "scripts/evaluate_routing.py",
+            "scripts/capability_matrix.py", "scripts/orchestration_config.py",
+            "scripts/validate_orchestration.py", "scripts/optimal_challenge/recovery.py",
+            "config/orchestration.json", "config/team-registry.schema.json",
+            "config/allocation-ledger.schema.json",
+        ):
+            self.assertIn(required, selected)
+        self.assertFalse(any(name.startswith(("tests/", "docs/", "submission/", ".github/")) for name in selected))
+        self.assertFalse(any(name in selected for name in (
+            "scripts/evaluation_evidence.py", "scripts/record_acceptance.py",
+            "scripts/review_acceptance.py", "scripts/verify_subject.py",
+            "scripts/check_quality.py", "requirements-dev.lock", "config/project.json",
+        )))
+        links = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
+        for name in selected:
+            if not name.startswith("skills/") or not name.endswith(".md"):
+                continue
+            for match in links.finditer((ROOT / name).read_text(encoding="utf-8")):
+                target = match.group(1).split("#", 1)[0]
+                if not target or ":" in target or target.startswith("/"):
+                    continue
+                resolved = ((ROOT / name).parent / target).resolve()
+                self.assertIn(resolved.relative_to(ROOT).as_posix(), selected, f"missing packaged skill link {name} -> {target}")
+
+    def test_packaged_orchestration_validator_runs_without_site_packages_from_task_directory(self):
+        project = json.loads((ROOT / "config/project.json").read_text(encoding="utf-8"))
+        files = iter_package_files(ROOT, project["packaging"]["excludes"], project["packaging"]["runtime_includes"])
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            archive = scratch / "runtime.zip"
+            build_archive(ROOT, archive, files)
+            plugin = scratch / "plugin"
+            plugin.mkdir()
+            with zipfile.ZipFile(archive) as package:
+                package.extractall(plugin)
+            task = scratch / "task"
+            task.mkdir()
+            fixtures = ROOT / "tests/fixtures/orchestration"
+            for name in ("valid-registry.json", "valid-ledger.json"):
+                shutil.copyfile(fixtures / name, task / name)
+            command = [
+                sys.executable, "-I", "-S", str(plugin / "scripts/validate_orchestration.py"),
+                "--registry", str(task / "valid-registry.json"),
+                "--ledger", str(task / "valid-ledger.json"),
+            ]
+            valid = subprocess.run(command, cwd=task, capture_output=True, text=True, check=False)
+            self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+            self.assertIn("ORCHESTRATION STATE VALIDATION PASSED", valid.stdout)
+            invalid_registry = json.loads((task / "valid-registry.json").read_text(encoding="utf-8"))
+            invalid_registry["unexpected"] = True
+            (task / "valid-registry.json").write_text(json.dumps(invalid_registry), encoding="utf-8")
+            invalid = subprocess.run(command, cwd=task, capture_output=True, text=True, check=False)
+            self.assertEqual(invalid.returncode, 1, invalid.stdout + invalid.stderr)
+            self.assertIn("$.registry.unexpected", invalid.stdout)
+            self.assertNotIn("Traceback", invalid.stderr)
+
     def test_release_hash_is_external_and_candidate_identity_remains_unverified(self):
         documentation = (ROOT / "config/README.md").read_text(encoding="utf-8").lower()
-        self.assertIn("cannot embed its own sha-256", documentation)
+        self.assertIn("evaluation manifest is external to the runtime archive", documentation)
         self.assertIn("task 10", documentation)
 
         manifest = json.loads((ROOT / "tests/evaluation-manifest.json").read_text(encoding="utf-8"))

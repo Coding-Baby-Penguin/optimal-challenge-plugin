@@ -212,7 +212,7 @@ def bundle(arm_id: str = "D", *, runs: list[dict] | None = None, **_ignored) -> 
         "reasoning": m["reasoning"],
         "tool_set": deepcopy(m["tool_set"]),
         "profile": m["profile"],
-        "config_sha256": m["config_sha256"],
+        "candidate_policy_config_sha256": m["candidate_policy_config_sha256"],
         "evaluator_version": m["evaluator_version"],
         "rubric_version": m["rubric_version"],
         "randomization": deepcopy(m["randomization"]),
@@ -237,7 +237,8 @@ def bundle(arm_id: str = "D", *, runs: list[dict] | None = None, **_ignored) -> 
             "artifact_fingerprint": subject(arm_id)["archive_sha256"],
             "registry_fingerprint": _sha_text(f"registry:{arm_id}"),
             "ledger_fingerprint": _sha_text(f"ledger:{arm_id}"),
-            "config_fingerprint": m["config_sha256"],
+            "policy_config_fingerprint": subject(arm_id)["policy_config_sha256"],
+            "policy_config_source": subject(arm_id)["policy_config_source"],
             "environment_evidence_id": f"evidence:environment:{arm_id}",
             "prior_arm_state_detected": False,
         },
@@ -339,9 +340,11 @@ class EvaluationArtifactTests(unittest.TestCase):
         self.assertEqual({arm["arm_id"] for arm in stored["arms"]}, {"A", "B", "C", "D"})
         self.assertEqual(stored["minimum_run_count"], 5)
         self.assertEqual(stored["margins"], manifest()["margins"])
-        self.assertEqual(stored["arms"][0]["commit"], "c3c379ab5429d1bfef3c145260247bc72f8844f9")
+        self.assertEqual(stored["arms"][0]["commit"], "b4510c8de09c64bc9ecfff07574c0d350e3b6da4")
+        self.assertIsNone(stored["arms"][0]["source_commit"])
+        self.assertEqual(stored["arms"][0]["commit_role"], "associated-release-tag-not-exact-asset-source")
         for arm in stored["arms"]:
-            for field in ("commit", "tag", "archive_sha256", "expected_manifest_version", "cachebuster", "install_source", "installed_plugin_read_back"):
+            for field in ("commit", "tag", "archive_sha256", "policy_config_sha256", "policy_config_source", "expected_manifest_version", "cachebuster", "install_source", "install_expectation", "installed_plugin_read_back"):
                 self.assertIn(field, arm)
             self.assertRegex(arm["archive_sha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(set(arm["policy_overrides"]), {"release", "delegation", "continuity", "premise_gate"})
@@ -357,13 +360,18 @@ class EvaluationArtifactTests(unittest.TestCase):
 
     def test_v11_baseline_is_truthfully_unverified(self):
         baseline = json.loads((ROOT / "tests/baselines/v1.1.json").read_text(encoding="utf-8"))
-        self.assertEqual(baseline["subject_commit"], "c3c379ab5429d1bfef3c145260247bc72f8844f9")
+        self.assertEqual(baseline["release_tag_commit"], "b4510c8de09c64bc9ecfff07574c0d350e3b6da4")
+        self.assertEqual(baseline["archive_sha256"], "f810f6bdb1e38eb722a7a1a89e01c1f4f5617fea1b7b396c6b582a83f5daba44")
+        self.assertEqual(baseline["source_kind"], "published-release-asset")
+        self.assertEqual(baseline["historical_local_archive"]["member_count"], 47)
         self.assertEqual(baseline["status"], "unverified")
         self.assertEqual(baseline["raw_result_ids"], [])
         self.assertIsNone(baseline["manifest_sha256"])
-        self.assertIsNone(baseline["installed_plugin_read_back"])
+        self.assertEqual(baseline["installed_plugin_read_back"]["exact_member_count"], 32)
+        self.assertTrue(baseline["installed_plugin_read_back"]["enabled"])
+        self.assertIsNone(baseline["cachebuster"])
         self.assertFalse(baseline["comparative_claims_allowed"])
-        self.assertIn("fresh", baseline["next_action"].lower())
+        self.assertTrue(baseline["next_action"].strip())
 
 
 class BundleValidationTests(unittest.TestCase):
@@ -379,9 +387,9 @@ class BundleValidationTests(unittest.TestCase):
             "prompt hash": lambda b: b["prompt_hashes"].__setitem__("system", "f" * 64),
             "fixture hash": lambda b: b["fixture_hashes"].__setitem__("team_routing", "f" * 64),
             "evaluator": lambda b: b.__setitem__("evaluator_version", "9.9.9"),
-            "plugin version": lambda b: b["subject"]["installed_plugin_read_back"].__setitem__("version", "1.1.0"),
-            "cachebuster": lambda b: b["subject"]["installed_plugin_read_back"].__setitem__("cachebuster", "stale-cache"),
-            "archive": lambda b: b["subject"]["installed_plugin_read_back"].__setitem__("archive_sha256", "f" * 64),
+            "installation version": lambda b: b["subject"]["install_expectation"].__setitem__("version", "1.1.0"),
+            "cachebuster": lambda b: b["subject"].__setitem__("cachebuster", "stale-cache"),
+            "installation archive": lambda b: b["subject"]["install_expectation"].__setitem__("archive_sha256", "f" * 64),
             "arm policy": lambda b: b["arm_policy"].__setitem__("continuity", "wrong"),
         }
         for label, mutate in mutations.items():
@@ -399,7 +407,7 @@ class BundleValidationTests(unittest.TestCase):
     def test_rejects_cache_config_registry_or_ledger_leakage(self):
         mutations = {
             "cache": lambda b: b["isolation"].__setitem__("cache_cleared", False),
-            "config": lambda b: b["isolation"].__setitem__("config_fingerprint", "wrong"),
+            "config": lambda b: b["isolation"].__setitem__("policy_config_fingerprint", "wrong"),
             "registry": lambda b: b["isolation"].__setitem__("fresh_registry", False),
             "ledger": lambda b: b["isolation"].__setitem__("prior_arm_state_detected", True),
         }
@@ -408,6 +416,23 @@ class BundleValidationTests(unittest.TestCase):
                 candidate = bundle()
                 mutate(candidate)
                 self.assertIn(label, " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)).lower())
+
+    def test_arm_specific_policy_config_fingerprint_is_bound_without_changing_shared_tasks(self):
+        self.assertIsNone(self.manifest["arms"][0]["policy_config_sha256"])
+        self.assertEqual(self.manifest["arms"][0]["policy_config_source"], "none-in-published-asset")
+        self.assertNotEqual(self.manifest["arms"][1]["policy_config_sha256"], self.manifest["candidate_policy_config_sha256"])
+        self.assertEqual(self.manifest["arms"][1]["policy_config_sha256"], self.manifest["arms"][2]["policy_config_sha256"])
+        candidate = bundle(arm_id="B")
+        self.assertEqual(self.evaluator.validate_run_bundle(candidate, self.manifest), [])
+        candidate["isolation"]["policy_config_fingerprint"] = self.manifest["candidate_policy_config_sha256"]
+        self.assertIn("config fingerprint mismatch", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)))
+        candidate = bundle(arm_id="C")
+        candidate["subject"]["policy_config_sha256"] = self.manifest["candidate_policy_config_sha256"]
+        self.assertIn("subject config fingerprint", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)))
+        candidate = bundle(arm_id="A")
+        self.assertEqual(self.evaluator.validate_run_bundle(candidate, self.manifest), [])
+        candidate["isolation"]["policy_config_fingerprint"] = self.manifest["candidate_policy_config_sha256"]
+        self.assertIn("config fingerprint mismatch", " ".join(self.evaluator.validate_run_bundle(candidate, self.manifest)))
 
     def test_rejects_insufficient_runs_duplicate_ids_and_invalid_execution_order(self):
         too_few = bundle(runs=[run(i) for i in range(4)])
