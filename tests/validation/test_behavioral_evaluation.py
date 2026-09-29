@@ -13,6 +13,7 @@ from pathlib import Path
 
 from scripts.evaluate_routing import score_delegation
 from scripts.orchestration_config import load_effective_config
+from scripts.optimal_challenge.evaluation_semantics import _compute_semantic_result
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -579,7 +580,7 @@ class ReviewerRegressionTests(unittest.TestCase):
                     available_slots=slots,
                     budget_capacity=budget,
                 )
-                behavioral = self.evaluator._compute_semantic_result("team-sizing.policy.v1", inputs)
+                behavioral = _compute_semantic_result("team-sizing.policy.v1", inputs)
                 if exact > host_max:
                     with self.assertRaisesRegex(ValueError, f"effective host maximum {host_max}"):
                         load_effective_config(

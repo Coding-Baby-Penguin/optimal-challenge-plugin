@@ -94,6 +94,8 @@ There is no universal best tree. The planner first identifies ecosystem conventi
 
 This repository applies that rule by keeping its package-validation suite under `tests/validation/`. Small projects remain shallow when their ecosystem expects it; folders are introduced only for tool discovery, a distinct lifecycle or boundary, or concrete near-term expansion.
 
+Maintainers can start at the [repository guide](docs/README.md) for owner maps, contribution checks, and evidence boundaries.
+
 ## Package layout
 
 ```text
@@ -101,6 +103,7 @@ optimal-challenge/
 ├── plugin.json                     portable Agent Plugins manifest
 ├── config/                         canonical project-owned configuration
 ├── docs/PROJECT-STATE.md           current state and development path
+├── docs/README.md                  maintainer entry map
 ├── .codex-plugin/plugin.json       Codex compatibility manifest
 ├── .claude-plugin/
 │   ├── plugin.json                 Claude Code plugin manifest
@@ -115,7 +118,8 @@ optimal-challenge/
 │   ├── evaluate_research_gate.py   executable research/pilot/scale decisions
 │   ├── validate_orchestration.py   registry/ledger schema and invariant gate
 │   ├── capability_matrix.py        trusted surface capability resolution
-│   └── evaluate_behavior.py        recorded fresh-host run evaluator
+│   ├── evaluate_behavior.py        recorded fresh-host run evaluator CLI
+│   └── optimal_challenge/          focused state, capability, and evaluator owners
 └── tests/
     ├── scenarios.json              structural trigger/anti-trigger matrix
     ├── research-gate.json          research-before-scale semantic cases
@@ -132,13 +136,15 @@ optimal-challenge/
 ### OpenAI / Codex-compatible plugin
 This repository contains a local Codex marketplace at `.agents/plugins/marketplace.json`. From PowerShell, set the checkout path once, then add the marketplace and install its plugin:
 
+For development, use an isolated host home and a clean extracted release archive as `$repoPath`. A marketplace install directly from a working checkout can copy ignored scratch files and `.git` into the plugin cache. The [contributor guide](docs/CONTRIBUTING.md) describes the archive and identity checks before release.
+
 ```powershell
 $repoPath = "C:\path\to\optimal-challenge-plugin"
 codex plugin marketplace add $repoPath
 codex plugin add optimal-challenge@optimal-challenge-local
 ```
 
-For another checkout, replace the path in the first command with that checkout's root. Start a new Codex task after installation so it loads the skill. The root `plugin.json` and `.codex-plugin/plugin.json` describe the plugin; `.agents/plugins/marketplace.json` is the manifest required by `codex plugin marketplace add`.
+For another clean extraction, replace the path in the first command with that extraction's root. Start a new Codex task after installation so it loads the skill. The root `plugin.json` and `.codex-plugin/plugin.json` describe the plugin; `.agents/plugins/marketplace.json` is the manifest required by `codex plugin marketplace add`.
 
 #### Skill selection
 

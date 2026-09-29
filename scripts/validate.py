@@ -119,7 +119,8 @@ def run_integrated_checks() -> None:
 
     try:
         manifest = read_json(configured_path("evaluationManifest", "tests/evaluation-manifest.json"))
-        behavioral_errors = evaluate_behavior._manifest_errors(manifest)
+        from scripts.optimal_challenge.evaluation_contracts import _manifest_errors
+        behavioral_errors = _manifest_errors(manifest)
         if behavioral_errors:
             errors.extend(f"Behavioral structure: {error}" for error in behavioral_errors)
         else:

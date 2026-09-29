@@ -32,6 +32,13 @@ def state_hash(value: dict) -> str:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_huge_reconciliation_version_never_allocates_a_version_range(self):
+        registry,ledger=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+        ledger["reconciliation_version"]=10**1000
+        self.assertTrue(validate_orchestration_state(registry,ledger))
+        with self.assertRaises(ValueError):
+            apply_ledger_event(ledger,event("reconciliation_failure",55,reason="test"))
+
     def test_protected_dispatch_holds_survive_unknown_usage_release_and_retry(self):
         from scripts.orchestration_state import prepare_dispatch
         r,l=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
