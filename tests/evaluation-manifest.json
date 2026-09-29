@@ -5,22 +5,31 @@
     "question_bundle": "7f92a32320192f499cf4535f901b8dccd259ab6b9ec4fc5d29058c0affd0f5b4"
   },
   "fixture_hashes": {
-    "behavioral_acceptance": "e34cd0817e41568312520460fc5f7dc9d94a17a81848e5f7ba71ebd8e124ea79",
+    "behavioral_acceptance": "a4dea28161fc5a593fda9ee9af5686750c337fae849daaf4262fd15ff5fb290e",
     "team_routing": "428c62c820403bb4923314ecfbaec9388f4555067feb63b2fc067e761404323e"
   },
   "host": "codex-desktop",
   "surface": "codex-local",
   "model": "host-configured-read-back-required",
   "reasoning": "host-configured-read-back-required",
-  "tool_set": ["filesystem", "shell", "collaboration"],
+  "tool_set": [
+    "filesystem",
+    "shell",
+    "collaboration"
+  ],
   "profile": "balanced",
   "config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
   "evaluator_version": "1.0.0",
-  "rubric_version": "1.0.0",
+  "rubric_version": "1.1.0",
   "randomization": {
     "method": "seeded-counterbalance",
     "seed": 12027,
-    "execution_order": ["A", "D", "B", "C"],
+    "execution_order": [
+      "A",
+      "D",
+      "B",
+      "C"
+    ],
     "record_actual_order": true
   },
   "minimum_run_count": 5,
@@ -55,7 +64,12 @@
     {
       "arm_id": "A",
       "definition": "v1.1 routing baseline",
-      "policy_overrides": {"release": "v1.1", "delegation": "v1.1-routing", "continuity": "v1.1-routing", "premise_gate": "v1.1-routing"},
+      "policy_overrides": {
+        "release": "v1.1",
+        "delegation": "v1.1-routing",
+        "continuity": "v1.1-routing",
+        "premise_gate": "v1.1-routing"
+      },
       "commit": "c3c379ab5429d1bfef3c145260247bc72f8844f9",
       "tag": "v1.1.0",
       "archive_sha256": "51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1",
@@ -73,7 +87,12 @@
     {
       "arm_id": "B",
       "definition": "always delegate decomposable work",
-      "policy_overrides": {"release": "v1.2-candidate", "delegation": "always-for-decomposable", "continuity": "disabled", "premise_gate": "disabled"},
+      "policy_overrides": {
+        "release": "v1.2-candidate",
+        "delegation": "always-for-decomposable",
+        "continuity": "disabled",
+        "premise_gate": "disabled"
+      },
       "evaluation_only": true,
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",
@@ -92,7 +111,12 @@
     {
       "arm_id": "C",
       "definition": "economic delegation gate without logical teammate continuity",
-      "policy_overrides": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "disabled", "premise_gate": "disabled"},
+      "policy_overrides": {
+        "release": "v1.2-candidate",
+        "delegation": "economic-gate",
+        "continuity": "disabled",
+        "premise_gate": "disabled"
+      },
       "evaluation_only": true,
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",
@@ -111,7 +135,12 @@
     {
       "arm_id": "D",
       "definition": "full economic gate, logical continuity, and premise gate candidate",
-      "policy_overrides": {"release": "v1.2-candidate", "delegation": "economic-gate", "continuity": "enabled", "premise_gate": "enabled"},
+      "policy_overrides": {
+        "release": "v1.2-candidate",
+        "delegation": "economic-gate",
+        "continuity": "enabled",
+        "premise_gate": "enabled"
+      },
       "evaluation_only": false,
       "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
       "tag": "v1.2.0-candidate",

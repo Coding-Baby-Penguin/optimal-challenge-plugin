@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -86,6 +87,28 @@ class PackageIndependentReview(unittest.TestCase):
             {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
         )
         self.assertEqual(codex_entry["category"], "Productivity")
+
+    def test_ignored_venv_symlink_does_not_fail_package_scope_validation(self):
+        directory=ROOT / ".venv"
+        existed=directory.exists()
+        directory.mkdir(exist_ok=True)
+        link=directory / "quality-ignored-interpreter"
+        if link.exists() or link.is_symlink(): self.skipTest("quality symlink already exists")
+        try:
+            os.symlink(ROOT / "README.md",link)
+        except (OSError,NotImplementedError) as exc:
+            if not existed:
+                try: directory.rmdir()
+                except OSError: pass
+            self.skipTest(f"symlink unavailable: {exc}")
+        try:
+            result=subprocess.run([sys.executable,str(ROOT / "scripts/validate.py")],cwd=ROOT,capture_output=True,text=True,check=False)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        finally:
+            link.unlink()
+            if not existed:
+                try: directory.rmdir()
+                except OSError: pass
 
     def test_integrated_validator_runs_task_one_through_seven_structural_gates(self):
         result = subprocess.run(

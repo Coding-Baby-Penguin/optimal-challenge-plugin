@@ -20,6 +20,31 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class OrchestrationConfigTests(unittest.TestCase):
+    def test_rejects_nonfinite_budget_values(self):
+        for field in ("limit", "soft_threshold"):
+            for value in (float("nan"),float("inf"),float("-inf"),json.loads("1e309"),True,"bad",[]):
+                with self.subTest(field=field,value=value):
+                    config=load_effective_config(ROOT)
+                    config["budget"].update(unit="tokens",limit=100,soft_threshold=50)
+                    config["budget"][field]=value
+                    self.assertTrue(validate_config(config),f"accepted {field}={value!r}")
+
+    def test_rejects_nonfinite_values_in_each_precedence_layer(self):
+        for layer in ("committed","local","task"):
+            for field in ("limit","soft_threshold"):
+                for value in (float("nan"),float("inf"),float("-inf"),json.loads("1e309")):
+                    with self.subTest(layer=layer,field=field,value=value), tempfile.TemporaryDirectory() as directory:
+                        root=Path(directory)
+                        budget={"unit":"tokens","limit":100,"soft_threshold":50}
+                        budget[field]=value
+                        override={"budget":budget}
+                        if layer!="task":
+                            path=root / ("config/orchestration.json" if layer=="committed" else ".optimal-challenge/orchestration.local.json")
+                            path.parent.mkdir(parents=True)
+                            path.write_text(json.dumps(override),encoding="utf-8")
+                        with self.assertRaises(ValueError):
+                            load_effective_config(root, task_override=override if layer=="task" else None)
+
     def test_balanced_auto_defaults_are_quiet(self):
         schema_path = ROOT / "config" / "orchestration.schema.json"
         committed_path = ROOT / "config" / "orchestration.json"

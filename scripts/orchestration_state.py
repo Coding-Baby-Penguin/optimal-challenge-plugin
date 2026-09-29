@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 import hashlib
 import json
 import math
+import re
 from typing import Any, Mapping, Sequence
 
 
@@ -36,8 +39,14 @@ EVENT_FIELDS = {
 }
 
 
+def _finite_number(value: Any) -> bool:
+    if isinstance(value,bool) or not isinstance(value,(int,float)): return False
+    try: return math.isfinite(value)
+    except OverflowError: return False
+
+
 def _number(value: Any, path: str) -> float | int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+    if not _finite_number(value) or value < 0:
         raise ValueError(f"{path}: must be a finite non-negative number")
     return value
 
@@ -430,7 +439,61 @@ def apply_ledger_event(ledger: Mapping[str, Any], event: Mapping[str, Any]) -> d
 
 
 def _is_non_negative(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    return _finite_number(value) and value >= 0
+
+
+@lru_cache(maxsize=2)
+def _state_schema(name: str) -> dict[str, Any]:
+    return json.loads((Path(__file__).resolve().parents[1] / "config" / name).read_text(encoding="utf-8"))
+
+
+def _shape_errors(value: Any, schema: Mapping[str, Any], root: Mapping[str, Any], path: str) -> list[str]:
+    """Check JSON-derived shapes before semantic code hashes or dereferences them."""
+    if "$ref" in schema:
+        target = root
+        for key in schema["$ref"].split("/")[1:]:
+            target = target[key]
+        return _shape_errors(value,target,root,path)
+    if "oneOf" in schema:
+        matches = sum(not _shape_errors(value,branch,root,path) for branch in schema["oneOf"])
+        if matches != 1: return [f"{path}: must match exactly one allowed shape"]
+    types = schema.get("type", [])
+    types = [types] if isinstance(types,str) else types
+    matches = {
+        "object": isinstance(value,Mapping), "array": isinstance(value,list),
+        "string": isinstance(value,str), "integer": isinstance(value,int) and not isinstance(value,bool),
+        "number": _finite_number(value),
+        "boolean": isinstance(value,bool), "null": value is None,
+    }
+    if types and not any(matches.get(kind,False) for kind in types):
+        return [f"{path}: expected {' or '.join(types)}"]
+    if "const" in schema and (value != schema["const"] or isinstance(value,bool) != isinstance(schema["const"],bool)):
+        return [f"{path}: violates constant contract"]
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{path}: invalid enum value"]
+    errors = []
+    if isinstance(value,str):
+        if len(value)<schema.get("minLength",0) or ("pattern" in schema and re.search(schema["pattern"],value) is None): errors.append(f"{path}: string violates identifier or length contract")
+    if _finite_number(value):
+        if ("minimum" in schema and value<schema["minimum"]) or ("maximum" in schema and value>schema["maximum"]): errors.append(f"{path}: number violates bounds")
+    if isinstance(value,Mapping):
+        for key in schema.get("required",[]):
+            if key not in value: errors.append(f"{path}.{key}: required key is missing")
+        properties=schema.get("properties",{})
+        additional=schema.get("additionalProperties",{})
+        for key,item in value.items():
+            if "propertyNames" in schema:
+                errors.extend(_shape_errors(key,schema["propertyNames"],root,path+".<key>"))
+            if not isinstance(key,str):
+                errors.append(f"{path}: object keys must be strings")
+                continue
+            child=properties.get(key,additional)
+            if child is False and key != "last_known_good": errors.append(f"{path}.{key}: unexpected key")
+            if isinstance(child,Mapping): errors.extend(_shape_errors(item,child,root,f"{path}.{key}"))
+    elif isinstance(value,list) and isinstance(schema.get("items"),Mapping):
+        if schema.get("uniqueItems") and any(value[index] in value[:index] for index in range(len(value))): errors.append(f"{path}: array entries must be unique")
+        for index,item in enumerate(value): errors.extend(_shape_errors(item,schema["items"],root,f"{path}[{index}]"))
+    return errors
 
 
 def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[str, Any]) -> list[str]:
@@ -440,6 +503,11 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
         return ["$.registry: expected an object"]
     if not isinstance(ledger, Mapping):
         return ["$.ledger: expected an object"]
+    for value, name, path in ((registry,"team-registry.schema.json","$.registry"),(ledger,"allocation-ledger.schema.json","$.ledger")):
+        schema = _state_schema(name)
+        errors.extend(_shape_errors(value,schema,schema,path))
+    if any("required key is missing" not in item for item in errors):
+        return errors
     registry_required = {
         "schema_version", "snapshot_version", "transaction_version", "transaction_id",
         "run_id", "coordinator_id", "status", "evidence", "teammates",
@@ -609,7 +677,7 @@ def validate_orchestration_state(registry: Mapping[str, Any], ledger: Mapping[st
                 reconciliation_versions.extend(version for version in versions if isinstance(version, int) and not isinstance(version, bool))
         all_records.extend((path, item) for item in mapped)
     if isinstance(current_reconciliation, int) and not isinstance(current_reconciliation, bool):
-        if sorted(reconciliation_versions) != list(range(1, current_reconciliation + 1)):
+        if len(reconciliation_versions) != current_reconciliation or any(version != index for index,version in enumerate(sorted(reconciliation_versions),1)):
             errors.append("$.ledger.reconciliation_version: history count and versions must exactly match reconciliation_version")
     event_records: dict[str, tuple[str, Any]] = {}
     for path, record in all_records:
@@ -717,6 +785,10 @@ def _verified_snapshot(container: Mapping[str, Any]) -> dict[str, Any] | None:
     return state
 
 
+def _safe_refs(value: Any, evidence: Mapping[str, Any]) -> list[str]:
+    return [ref for ref in value if isinstance(ref,str) and ref in evidence] if isinstance(value,list) else []
+
+
 def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], reasons: list[str]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """Return a closed-schema, cross-record-valid blocked state with safe entries retained."""
     reason = "; ".join(str(item) for item in reasons if str(item).strip()) or "orchestration state could not be verified"
@@ -725,7 +797,7 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
     for key, item in raw_evidence.items():
         if isinstance(key, str) and key.strip() and isinstance(item, Mapping) and item.get("evidence_id") == key:
             allowed = {name: deepcopy(item[name]) for name in ("evidence_id", "kind", "outcome", "sha256", "version") if name in item}
-            if allowed.get("kind") in {"review", "source", "test", "task", "return", "reservation", "terminal", "decision"} and allowed.get("outcome") in {"accepted", "rejected", "verified", "failed", "unknown"}:
+            if isinstance(allowed.get("kind"),str) and isinstance(allowed.get("outcome"),str) and allowed.get("kind") in {"review", "source", "test", "task", "return", "reservation", "terminal", "decision"} and allowed.get("outcome") in {"accepted", "rejected", "verified", "failed", "unknown"}:
                 recovered_evidence[key] = allowed
 
     raw_teammates = registry.get("teammates", {}) if isinstance(registry.get("teammates"), Mapping) else {}
@@ -734,18 +806,18 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
         if not isinstance(key, str) or not key.strip() or not isinstance(item, Mapping) or item.get("logical_teammate_id") != key:
             continue
         trust = item.get("trust", {}) if isinstance(item.get("trust"), Mapping) else {}
-        trust_refs = [ref for ref in trust.get("evidence_refs", []) if ref in recovered_evidence and recovered_evidence[ref].get("kind") == "review"]
+        trust_refs = [ref for ref in _safe_refs(trust.get("evidence_refs"), recovered_evidence) if recovered_evidence[ref].get("kind") == "review"]
         successful = sum(recovered_evidence[ref].get("outcome") == "accepted" for ref in trust_refs)
         failed = sum(recovered_evidence[ref].get("outcome") in {"rejected", "failed"} for ref in trust_refs)
-        capability = item.get("capability_class") if item.get("capability_class") in {"economy", "standard", "reasoning", "frontier"} else "standard"
-        continuity = item.get("continuity_mode") if item.get("continuity_mode") in {"resume", "rehydrate", "fresh"} else "rehydrate"
+        capability = item.get("capability_class") if isinstance(item.get("capability_class"),str) and item.get("capability_class") in {"economy", "standard", "reasoning", "frontier"} else "standard"
+        continuity = item.get("continuity_mode") if isinstance(item.get("continuity_mode"),str) and item.get("continuity_mode") in {"resume", "rehydrate", "fresh"} else "rehydrate"
         recovered_teammates[key] = {
             "logical_teammate_id": key,
             "role": item.get("role") if isinstance(item.get("role"), str) and item.get("role").strip() else "recovered",
             "capability_class": capability,
             "continuity_mode": continuity,
             "native_handle": None,
-            "working_set_evidence_refs": [ref for ref in item.get("working_set_evidence_refs", []) if ref in recovered_evidence],
+            "working_set_evidence_refs": _safe_refs(item.get("working_set_evidence_refs"), recovered_evidence),
             "trust": {"successful_reviews": successful, "failed_reviews": failed, "evidence_refs": trust_refs},
             "active_assignment_ids": [],
         }
@@ -765,15 +837,15 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
             continue
         teammate_id = assignment.get("logical_teammate_id")
         reservation_id = assignment.get("reservation_id")
-        reservation = raw_reservations.get(reservation_id)
-        if teammate_id not in recovered_teammates or not isinstance(reservation_id, str) or not reservation_id.strip() or not isinstance(reservation, Mapping):
+        reservation = raw_reservations.get(reservation_id) if isinstance(reservation_id,str) else None
+        if not isinstance(teammate_id,str) or teammate_id not in recovered_teammates or not isinstance(reservation_id, str) or not reservation_id.strip() or not isinstance(reservation, Mapping):
             continue
         if reservation.get("reservation_id") != reservation_id or reservation.get("assignment_id") != assignment_id or reservation.get("logical_teammate_id") != teammate_id:
             continue
         cleaned = {name: deepcopy(reservation.get(name)) for name in reservation_fields}
         cleaned["state"] = "unknown"
         cleaned["terminal_evidence"] = None
-        cleaned["evidence_refs"] = [ref for ref in reservation.get("evidence_refs", []) if ref in recovered_evidence]
+        cleaned["evidence_refs"] = _safe_refs(reservation.get("evidence_refs"), recovered_evidence)
         if any(not _is_non_negative(cleaned.get(name)) for name in ("initial_reserved", "active_reserved", "funded_consumed", "funded_reservation_overrun", "unfunded_consumed", "released_unused")):
             continue
         recovered_reservations[reservation_id] = cleaned
@@ -783,7 +855,7 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
             "reservation_id": reservation_id,
             "capability_class": recovered_teammates[teammate_id]["capability_class"],
             "state": "unknown",
-            "evidence_refs": [ref for ref in assignment.get("evidence_refs", []) if ref in recovered_evidence],
+            "evidence_refs": _safe_refs(assignment.get("evidence_refs"), recovered_evidence),
         }
         recovered_teammates[teammate_id]["active_assignment_ids"].append(assignment_id)
 
@@ -807,7 +879,7 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
         "assignments": recovered_assignments,
         "quarantine": quarantine_entries,
     }
-    unit = ledger.get("unit") if ledger.get("unit") in {"credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"} else "model_calls"
+    unit = ledger.get("unit") if isinstance(ledger.get("unit"),str) and ledger.get("unit") in {"credits", "tokens", "seconds", "currency", "tool_calls", "model_calls"} else "model_calls"
     ceiling = ledger.get("ceiling") if _is_non_negative(ledger.get("ceiling")) else 0
     reserves = ledger.get("reserves") if isinstance(ledger.get("reserves"), Mapping) else {}
     recovered_ledger = {
@@ -856,8 +928,13 @@ def _unknown_recovery(registry: Mapping[str, Any], ledger: Mapping[str, Any], re
 
 def recover_state(registry: Mapping[str, Any], ledger: Mapping[str, Any], evidence: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """Recover verified state and replay events while rebuilding both sides atomically."""
+    input_errors = []
+    if not isinstance(registry,Mapping): input_errors.append("$.registry: expected an object")
+    if not isinstance(ledger,Mapping): input_errors.append("$.ledger: expected an object")
     if not isinstance(evidence, Sequence) or isinstance(evidence, (str, bytes)):
-        raise TypeError("evidence must be a sequence of mappings")
+        input_errors.append("$.evidence: must be a sequence of mappings")
+    if input_errors:
+        return _unknown_recovery(registry if isinstance(registry,Mapping) else {},ledger if isinstance(ledger,Mapping) else {},input_errors)
     current_errors = validate_orchestration_state(registry, ledger)
     recovered_registry, recovered_ledger = deepcopy(dict(registry)), deepcopy(dict(ledger))
     notices: list[str] = []
@@ -876,6 +953,8 @@ def recover_state(registry: Mapping[str, Any], ledger: Mapping[str, Any], eviden
             if not isinstance(item, Mapping):
                 raise ValueError("evidence item must be an object")
             event_type = item.get("type")
+            if not isinstance(event_type,str):
+                raise ValueError("$.evidence.type: must be a string")
             if event_type not in {"start", "retry_start", "complete", "retry_complete", "cancel", "failed", "fail", "timeout", "late_report", "reconcile", "reconciliation_failure", "reset"}:
                 continue
             already_applied = item.get("event_id") in recovered_ledger.get("applied_event_ids", [])
@@ -930,3 +1009,46 @@ def recover_state(registry: Mapping[str, Any], ledger: Mapping[str, Any], eviden
     if final_errors:
         return _unknown_recovery(recovered_registry, recovered_ledger, notices + final_errors)
     return recovered_registry, recovered_ledger, notices
+
+
+def prepare_dispatch(registry: Mapping[str, Any], ledger: Mapping[str, Any], worker_event: Mapping[str, Any]) -> tuple[dict, dict]:
+    """Protect planning obligations with real holds before atomic worker dispatch.
+
+    This is the supported coordinator-owned path; raw ledger calls do not protect
+    reserves. Existing funded holds or consumed obligation capacity count once.
+    """
+    errors = validate_orchestration_state(registry,ledger)
+    if errors:
+        raise ValueError("invalid dispatch state: " + "; ".join(errors))
+    if not ledger.get("balances_known") or ledger.get("status") == "blocked":
+        raise ValueError("dispatch blocked: balances are unknown or state is blocked")
+    if not isinstance(worker_event,Mapping):
+        raise ValueError("worker event must be an object")
+    _validate_event(worker_event)
+    if worker_event.get("type") not in {"start","retry_start"} or worker_event.get("kind","worker") != "worker":
+        raise ValueError("dispatch requires a worker start or retry_start event")
+    r,l=deepcopy(dict(registry)),deepcopy(dict(ledger))
+    owner="obligation:" + _required_text(registry.get("coordinator_id"),"$.registry.coordinator_id")
+    if owner in r["teammates"] and r["teammates"][owner].get("role") != "protected-obligations":
+        raise ValueError("protected obligation owner conflicts with existing teammate")
+    missing=[]
+    for requirement,kind in (("coordinator","coordinator"),("integration","integration"),("mandatory_review","review")):
+        required=_number(l.get("reserves",{}).get(requirement),"$.ledger.reserves."+requirement)
+        funded=sum(item["active_reserved"]+item["funded_consumed"] for item in l["reservations"].values() if item.get("logical_teammate_id")==owner and item.get("kind")==kind)
+        if required > funded: missing.append((kind,required-funded))
+    amount=_number(worker_event.get("amount"),"$.worker_event.amount")
+    if amount + sum(amount for _,amount in missing) > l["available"]:
+        raise ValueError("insufficient capacity after protected coordinator/integration/review obligations")
+    if missing:
+        r["teammates"].setdefault(owner,{"logical_teammate_id":owner,"role":"protected-obligations","capability_class":"standard","continuity_mode":"fresh","native_handle":None,"working_set_evidence_refs":[],"trust":{"successful_reviews":0,"failed_reviews":0,"evidence_refs":[]},"active_assignment_ids":[]})
+    events=[]
+    for kind,amount in missing:
+        identity=worker_event["event_id"]+":protected:"+kind
+        events.append({"event_id":identity,"transaction_id":identity,"type":"start","reservation_id":identity,"assignment_id":identity,"logical_teammate_id":owner,"kind":kind,"amount":amount,"attempt":1,"evidence_refs":[]})
+    events.append(dict(worker_event))
+    recovered_r,recovered_l,notices=recover_state(r,l,events)
+    if notices or recovered_l.get("status")=="blocked":
+        raise ValueError("dispatch failed before mutation: " + "; ".join(notices))
+    errors=validate_orchestration_state(recovered_r,recovered_l)
+    if errors: raise ValueError("dispatch produced invalid state: "+"; ".join(errors))
+    return recovered_r,recovered_l

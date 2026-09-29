@@ -32,6 +32,137 @@ def state_hash(value: dict) -> str:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_protected_dispatch_holds_survive_unknown_usage_release_and_retry(self):
+        from scripts.orchestration_state import prepare_dispatch
+        r,l=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+        r["teammates"]["worker-1"]["active_assignment_ids"]=[];r["assignments"]={}
+        r["evidence"]["end"]={"evidence_id":"end","kind":"terminal","outcome":"verified"}
+        l.update(reservations={},reserved=0,available=100)
+        start=event("start",30,reservation_id="r30",assignment_id="a30",logical_teammate_id="worker-1",kind="worker",amount=40,evidence_refs=["work-1"])
+        r,l=prepare_dispatch(r,l,start)
+        r,l,notices=recover_state(r,l,[event("timeout",31,reservation_id="r30")])
+        self.assertEqual(notices,[])
+        self.assertEqual(l["reservations"]["r30"]["active_reserved"],40)
+        self.assertEqual(l["available"],30)
+        retry=event("retry_start",33,reservation_id="r33",assignment_id="a33",logical_teammate_id="worker-1",retry_of_reservation_id="r30",attempt=2,amount=60,evidence_refs=["work-1"])
+        with self.assertRaises(ValueError): prepare_dispatch(r,l,retry)
+        r,l,notices=recover_state(r,l,[event("cancel",32,reservation_id="r30",amount=5,confirmed_remainder=35,terminal_evidence="end",measurement="observed")])
+        self.assertEqual(notices,[])
+        self.assertEqual(l["available"],65)
+        self.assertEqual(sum(x["active_reserved"] for x in l["reservations"].values() if x["kind"] in {"coordinator","integration","review"}),30)
+        r,l=prepare_dispatch(r,l,retry)
+        self.assertEqual(l["available"],5)
+        self.assertEqual(validate_orchestration_state(r,l),[])
+
+    def test_bounded_json_shape_mutation_corpus_is_total(self):
+        originals=(load_fixture("valid-registry.json"),load_fixture("valid-ledger.json"))
+        def paths(value,prefix=()):
+            yield prefix
+            if isinstance(value,dict):
+                for key,item in value.items(): yield from paths(item,prefix+(key,))
+            elif isinstance(value,list):
+                for index,item in enumerate(value): yield from paths(item,prefix+(index,))
+        for side in (0,1):
+            schema=json.loads((ROOT / "config" / ("team-registry.schema.json" if side==0 else "allocation-ledger.schema.json")).read_text())
+            validator=Draft202012Validator(schema)
+            for path in paths(originals[side]):
+                for replacement in (None,[],{},True,"",[["nested"]],float("nan"),10**1000):
+                    r,l=copy.deepcopy(originals)
+                    pair=[r,l]
+                    if path:
+                        parent=pair[side]
+                        for key in path[:-1]: parent=parent[key]
+                        parent[path[-1]]=copy.deepcopy(replacement)
+                    else: pair[side]=copy.deepcopy(replacement)
+                    before=copy.deepcopy(pair)
+                    with self.subTest(side=side,path=path,value=replacement):
+                        errors=validate_orchestration_state(*pair)
+                        if not errors: self.assertEqual(list(validator.iter_errors(pair[side])),[])
+                        rr,ll,reasons=recover_state(*pair,[])
+                        self.assertEqual(validate_orchestration_state(rr,ll),[])
+                        if errors:
+                            self.assertTrue(reasons)
+                            self.assertEqual(ll["status"],"blocked")
+                            self.assertIsNone(ll["available"])
+                        self.assertEqual(pair,before)
+
+    def test_missing_nested_contract_fields_and_huge_numbers_fail_safely(self):
+        for section,key in (("teammates","role"),("assignments","capability_class")):
+            r,l=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+            next(iter(r[section].values())).pop(key)
+            self.assertTrue(validate_orchestration_state(r,l))
+        r,l=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+        l["ceiling"]=10**1000
+        self.assertTrue(validate_orchestration_state(r,l))
+        recovered_r,recovered_l,reasons=recover_state(r,l,[])
+        self.assertTrue(reasons)
+        self.assertEqual(recovered_l["status"],"blocked")
+
+    def test_prepare_dispatch_protects_obligations_without_double_charging(self):
+        from scripts.orchestration_state import prepare_dispatch
+        registry,ledger=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+        registry["teammates"]["worker-1"]["active_assignment_ids"]=[]
+        registry["assignments"]={}
+        ledger.update(reservations={},reserved=0,available=100)
+        before=copy.deepcopy((registry,ledger))
+        first=event("start",20,reservation_id="r20",assignment_id="a20",logical_teammate_id="worker-1",kind="worker",amount=40,evidence_refs=["work-1"])
+        r,l=prepare_dispatch(registry,ledger,first)
+        self.assertEqual(l["available"],30)
+        self.assertEqual(l["reserved"],70)
+        self.assertEqual(sum(x["active_reserved"] for x in l["reservations"].values() if x["kind"]!="worker"),30)
+        self.assertEqual(validate_orchestration_state(r,l),[])
+        self.assertEqual((registry,ledger),before)
+        second=event("start",21,reservation_id="r21",assignment_id="a21",logical_teammate_id="worker-1",kind="worker",amount=60,evidence_refs=["work-1"])
+        with self.assertRaisesRegex(ValueError,"capacity"):
+            prepare_dispatch(r,l,second)
+        second["amount"]=10
+        r2,l2=prepare_dispatch(r,l,second)
+        self.assertEqual(l2["available"],20)
+        self.assertEqual(len(l2["reservations"]),5)
+        self.assertEqual(validate_orchestration_state(r2,l2),[])
+
+    def test_prepare_dispatch_blocks_unknown_balances_before_mutation(self):
+        from scripts.orchestration_state import prepare_dispatch
+        registry,ledger=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+        r,l,_=recover_state(registry,{"broken":True},[])
+        before=copy.deepcopy((r,l))
+        with self.assertRaisesRegex(ValueError,"blocked|unknown"):
+            prepare_dispatch(r,l,event("start",22,reservation_id="r22",assignment_id="a22",logical_teammate_id="worker-1",kind="worker",amount=1,evidence_refs=["work-1"]))
+        self.assertEqual((r,l),before)
+
+    def test_malformed_json_shapes_return_errors_and_blocked_recovery(self):
+        mutations = [
+            lambda r,l: r["teammates"]["worker-1"].update(trust=None),
+            lambda r,l: r["teammates"]["worker-1"].update(logical_teammate_id=[]),
+            lambda r,l: r["teammates"]["worker-1"]["trust"].update(evidence_refs=[["review-1"]]),
+            lambda r,l: r["assignments"]["assignment-1"].update(logical_teammate_id=[]),
+            lambda r,l: l["reservations"]["reservation-1"].update(assignment_id=[]),
+            lambda r,l: l.update(applied_event_ids=[[]]),
+            lambda r,l: l.update(transaction_version=[]),
+            lambda r,l: r.update(evidence=[]),
+            lambda r,l: r.pop("snapshot_version"),
+        ]
+        for index,mutate in enumerate(mutations):
+            with self.subTest(index=index):
+                registry,ledger=load_fixture("valid-registry.json"),load_fixture("valid-ledger.json")
+                mutate(registry,ledger)
+                before=copy.deepcopy((registry,ledger))
+                self.assertTrue(validate_orchestration_state(registry,ledger))
+                recovered_r,recovered_l,reasons=recover_state(registry,ledger,[])
+                self.assertTrue(reasons)
+                self.assertEqual(recovered_l["status"],"blocked")
+                self.assertIsNone(recovered_l["available"])
+                self.assertEqual(validate_orchestration_state(recovered_r,recovered_l),[])
+                self.assertEqual((registry,ledger),before)
+
+    def test_wrong_roots_and_replay_shapes_recover_without_incidental_errors(self):
+        for registry,ledger,evidence in [(None,[],[]),([],None,[]),(load_fixture("valid-registry.json"),load_fixture("valid-ledger.json"),None),(load_fixture("valid-registry.json"),load_fixture("valid-ledger.json"),[{"type":[]}])]:
+            with self.subTest(registry=registry,evidence=evidence):
+                r,l,reasons=recover_state(registry,ledger,evidence)
+                self.assertTrue(reasons)
+                self.assertEqual(l["status"],"blocked")
+                self.assertEqual(validate_orchestration_state(r,l),[])
+
     def test_closed_schemas_accept_fixtures_and_reject_unknown_fields(self) -> None:
         for schema_name, fixture_name in [
             ("team-registry.schema.json", "valid-registry.json"),

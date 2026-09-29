@@ -6,12 +6,13 @@
     "skills/optimal-challenge/references/context-management.md": "6d9647a8fc044b0ed225072cca468facdad2655a73b1b4747eaa8d0272ced2c0",
     "skills/optimal-challenge/references/continuity-collaboration.md": "95d22623813ab8f3c71f1428d7228bd619f4df86d66ef5cd909e7aa754dee9c4",
     "skills/optimal-challenge/references/team-continuity.md": "3300790d6cecf9ea594739d442b4e063566cca51539ef8982eb147e395a61577",
-    "docs/PROJECT-STATE.md": "edcf3413c18657d47513c526deda5e7aeb30a1268d2732ce548bf2ac7a7f298d"
+    "config/goal-context-contract.md": "9ab0adeaac2f43805277c5390f6ad1621a152ac8cae87943666fda8bf7a61921"
   },
   "update_workflow": [
     "Review the exact diff for every changed pinned document.",
     "Recompute normalized utf8-lf document hashes only after approval.",
     "Update this file, then deliberately update APPROVED_GOAL_CONTEXT_PINSET_SHA256 in test_goal_context_contracts.py.",
-    "Run the accepted paraphrase mutations and the full validation gate before commit."
+    "Run the accepted paraphrase mutations and the full validation gate before commit.",
+    "Routine PROJECT-STATE phase/date/status updates do not change policy pins; release claims still require separately verified current evidence."
   ]
 }

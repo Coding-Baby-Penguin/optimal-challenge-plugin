@@ -14,6 +14,7 @@ from evaluate_research_gate import validate_manifest as validate_research_manife
 from evaluate_routing import validate_manifest as validate_routing_manifest
 from orchestration_config import load_effective_config, validate_config
 from orchestration_state import validate_orchestration_state
+from package_release import iter_package_files
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CONFIG_PATH = ROOT / "config" / "project.json"
@@ -195,11 +196,16 @@ if len(claude_plugins) == 1 and isinstance(claude_plugins[0], dict):
 # This release line intentionally ships without active hooks.
 check(not (ROOT / "hooks" / "hooks.json").exists(), "Plugin must not ship active hooks/hooks.json")
 
-# No symlinks or unsafe relative paths
-for path in ROOT.rglob("*"):
-    check(not path.is_symlink(), f"Symlink not allowed in package: {path.relative_to(ROOT)}")
-    rel = path.relative_to(ROOT)
-    check(".." not in rel.parts, f"Unsafe path: {rel}")
+# Inspect the selected tracked package set. Ignored virtual environments may
+# contain interpreter symlinks; they never enter the distributable archive.
+package_excludes = project_config.get("packaging", {}).get("excludes", []) if isinstance(project_config, dict) else []
+if not isinstance(package_excludes, list):
+    errors.append("config/project.json packaging.excludes must be an array")
+    package_excludes = []
+try:
+    iter_package_files(ROOT, package_excludes)
+except (OSError, ValueError) as exc:
+    errors.append(f"Package selection: {exc}")
 
 # Skill frontmatter
 text = SKILL.read_text(encoding="utf-8")

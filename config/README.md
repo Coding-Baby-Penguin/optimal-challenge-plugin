@@ -40,9 +40,9 @@ must not rewrite provisional identity into a false verified claim.
 
 Orchestration policy has one access path: call
 `scripts.orchestration_config.load_effective_config(...)`. From highest to
-lowest authority, effective settings come from system/developer/host/repository
-instructions, safety and permission constraints, explicit current-request
-constraints, `.optimal-challenge/orchestration.local.json`, committed
+lowest authority, effective settings come from system/developer/host and hard
+permission constraints; explicit current user scope and persistent authorization
+within those bounds; applicable repository/skill guidance; `.optimal-challenge/orchestration.local.json`, committed
 `orchestration.json`, and built-in defaults. The Python loader applies the last
 three machine-readable layers; callers remain responsible for higher-authority
 instructions and pass current-request settings as `task_override`.
@@ -159,3 +159,7 @@ $env:PYTHONPATH = $validationDeps
 - Publisher, policy, and support URLs remain in manifests and user documents where they are public metadata rather than deploy-varying configuration.
 - Fake paths and placeholders in documentation remain local to their examples and must never contain machine-specific or secret values.
 - Release-history text under `submission/` records the release it describes and is not runtime configuration.
+
+## Stable policy and mutable status
+
+[Goal/context guarantees](goal-context-contract.md) are independently hash-pinned. [Project state](../docs/PROJECT-STATE.md) is the only mutable checkpoint; phase/date/status changes need no pin repair. A checkpoint cannot establish release acceptance. Run `python scripts/check_quality.py --mode structural --output tmp/quality/summary.json` locally and in CI; host acceptance stays explicitly unverified. Release mode separately requires authentic current host evidence.

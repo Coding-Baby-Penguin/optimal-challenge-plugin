@@ -60,8 +60,8 @@ CANONICAL_FILES = {
     ("fixture_hashes", "team_routing"): ROOT / "tests" / "team-routing.json",
     (None, "config_sha256"): ROOT / "config" / "orchestration.json",
 }
-APPROVED_BEHAVIORAL_FIXTURE_VERSION = 1
-APPROVED_BEHAVIORAL_FIXTURE_SHA256 = "e34cd0817e41568312520460fc5f7dc9d94a17a81848e5f7ba71ebd8e124ea79"
+APPROVED_BEHAVIORAL_FIXTURE_VERSION = 2
+APPROVED_BEHAVIORAL_FIXTURE_SHA256 = "a4dea28161fc5a593fda9ee9af5686750c337fae849daaf4262fd15ff5fb290e"
 KNOWN_SURFACES = frozenset({
     "codex-local", "openai-api-agents", "claude-code-local", "anthropic-api-agent-sdk"
 })
@@ -89,7 +89,12 @@ def _is_text(value: Any) -> bool:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value,(int,float)) or isinstance(value,bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_sha256(value: Any) -> bool:
@@ -776,7 +781,9 @@ def _validate_run(
     if record.get("failure_visibility_pass") is not True:
         errors.append(f"{path} failure visibility failed")
     failed = record.get("passed") is False
-    if record.get("observed_route") != case.get("expected_route") and not failed:
+    arm_contract = (_mapping(case.get("arm_expectations")) or {}).get(arm_id, {})
+    route_required = arm_contract.get("route_required", True)
+    if route_required and record.get("observed_route") != case.get("expected_route") and not failed:
         errors.append(f"{path} route does not match acceptance contract")
     proxies = _mapping(record.get("proxies"))
     if proxies is None:
@@ -786,23 +793,25 @@ def _validate_run(
             value = proxies.get(field)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 errors.append(f"{path}.proxies.{field} must be a non-negative integer")
-        if not failed and proxies.get("spawn_count") != case.get("expected_spawn_count"):
+        if route_required and not failed and proxies.get("spawn_count") != case.get("expected_spawn_count"):
             errors.append(f"{path} spawn count does not match acceptance contract")
-        if not failed and proxies.get("question_count") != case.get("expected_question_count"):
+        if route_required and not failed and proxies.get("question_count") != case.get("expected_question_count"):
             errors.append(f"{path} question count does not match acceptance contract")
     prohibited = _sequence(record.get("prohibited_behaviors"))
     observed = _sequence(record.get("observed_behaviors"))
     if prohibited is None or observed is None or any(not _is_text(item) for item in prohibited) or any(not _is_text(item) for item in observed):
         errors.append(f"{path} prohibited and observed behaviors must be arrays of non-empty strings")
-    elif set(prohibited) & set(observed) and not failed:
+    elif route_required and set(prohibited) & set(observed) and not failed:
         errors.append(f"{path} prohibited behavior observed")
     for metric in ("cost", "latency", "critical_path"):
         _validate_measurement(record.get(metric), f"{path}.{metric}", errors)
     for field in ("unnecessary_spawn", "premise_reset", "repeated_settled_question"):
         if not isinstance(record.get(field), bool):
             errors.append(f"{path}.{field} must be boolean")
-    _validate_question(record, case, arm_id, path, errors)
-    _validate_calculation(record, case, path, errors)
+    if route_required:
+        _validate_question(record, case, arm_id, path, errors)
+    if arm_contract.get("semantic_required", True):
+        _validate_calculation(record, case, path, errors)
     raw_id, grader_id = _validate_outputs(record, arm_id, artifact_sha256, path, errors)
     return replicate, raw_id, grader_id
 

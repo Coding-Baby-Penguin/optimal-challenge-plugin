@@ -289,7 +289,7 @@ class EvaluationArtifactTests(unittest.TestCase):
     def test_acceptance_matrix_covers_routes_ux_and_failure_boundaries(self):
         matrix = json.loads((ROOT / "tests/behavioral-acceptance.json").read_text(encoding="utf-8"))
         cases = matrix["cases"]
-        self.assertEqual(len(cases), 30)
+        self.assertEqual(len(cases), 31)
         categories = {case["category"] for case in cases}
         self.assertTrue({"direct", "premise", "invocation", "profile", "continuity", "budget", "review", "capability-fallback", "failure"} <= categories)
         required_routes = {
@@ -347,11 +347,11 @@ class EvaluationArtifactTests(unittest.TestCase):
         self.assertTrue(stored["arms"][1]["evaluation_only"])
 
     def test_approved_fixture_identity_is_independent_of_manifest_and_fixture(self):
-        self.assertEqual(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_VERSION, 1)
+        self.assertEqual(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_VERSION, 2)
         self.assertRegex(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_SHA256, r"^[0-9a-f]{64}$")
         self.assertEqual(
             EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_SHA256,
-            "e34cd0817e41568312520460fc5f7dc9d94a17a81848e5f7ba71ebd8e124ea79",
+            "a4dea28161fc5a593fda9ee9af5686750c337fae849daaf4262fd15ff5fb290e",
         )
 
     def test_v11_baseline_is_truthfully_unverified(self):
@@ -834,7 +834,7 @@ class ReviewerRegressionTests(unittest.TestCase):
                 self.assertEqual(expected["route"], route)
             elif formula == "team-sizing.policy.v1":
                 if inputs["exact_specialists"] is not None:
-                    expected_count = inputs["exact_specialists"]
+                    expected_count = inputs["exact_specialists"] if inputs["exact_specialists"] <= min(inputs["detected_host_max"],inputs["available_slots"],inputs["budget_capacity"]) else 0
                 else:
                     expected_count = min(inputs["independent_workstreams"], inputs["max_active_specialists"], inputs["detected_host_max"], inputs["available_slots"], inputs["budget_capacity"])
                 self.assertEqual(expected["specialist_count"], expected_count)

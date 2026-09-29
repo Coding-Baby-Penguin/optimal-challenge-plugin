@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "rubric_id": "holistic-quality-2026-09-29-v1",
+  "claim_status": "unawarded",
+  "baseline_subject": "0541780570cee50fdb4e6394105814ebc80ca81d",
+  "anchors": {
+    "3-4": "substantial integration or evidence gap",
+    "5-6": "usable with incomplete or burdensome areas",
+    "7-8": "good with material gaps",
+    "9-10": "excellent implementation with convincing independent evidence"
+  },
+  "dimensions": [
+    {
+      "id": "purpose",
+      "weight": 6,
+      "baseline": 8,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Useful coding analysis and artifact outcomes"
+      ]
+    },
+    {
+      "id": "user_control",
+      "weight": 6,
+      "baseline": 7.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Exact-count and overrides honored without ceremony"
+      ]
+    },
+    {
+      "id": "host_behavior",
+      "weight": 12,
+      "baseline": 3,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Authentic isolated held-out host runs independently graded"
+      ]
+    },
+    {
+      "id": "correctness",
+      "weight": 12,
+      "baseline": 6.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Finite numbers and corrupt-state regression closures"
+      ]
+    },
+    {
+      "id": "architecture",
+      "weight": 6,
+      "baseline": 6.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Compatible focused module ownership"
+      ]
+    },
+    {
+      "id": "security",
+      "weight": 7,
+      "baseline": 7.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Trusted recorder safe reads and redacted evidence"
+      ]
+    },
+    {
+      "id": "test_quality",
+      "weight": 7,
+      "baseline": 7.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Meaningful negative tests holdouts and independent evidence"
+      ]
+    },
+    {
+      "id": "efficiency",
+      "weight": 4,
+      "baseline": 5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Observed whole-job usage and latency comparison"
+      ]
+    },
+    {
+      "id": "recovery",
+      "weight": 3,
+      "baseline": 5.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Controlled corruption timeout cancellation and unknown usage"
+      ]
+    },
+    {
+      "id": "platform",
+      "weight": 3,
+      "baseline": 4.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Positive host acceptance and tested limitations"
+      ]
+    },
+    {
+      "id": "installation",
+      "weight": 3,
+      "baseline": 6,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Clean Windows Linux setup and host install read-back"
+      ]
+    },
+    {
+      "id": "packaging",
+      "weight": 5,
+      "baseline": 6.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Immutable source archive and installed identity"
+      ]
+    },
+    {
+      "id": "documentation",
+      "weight": 6,
+      "baseline": 6.5,
+      "target": 9.5,
+      "awarded_score": null,
+      "required_evidence": [
+        "Fresh contributor handover without historical chat"
+      ]
+    },
+    {
+      "id": "cleanliness",
+      "weight": 20,
+      "baseline": 6.5,
+      "target": 10,
+      "awarded_score": null,
+      "required_evidence": [
+        "Authoritative artifacts lifecycle navigation and valid links"
+      ]
+    }
+  ]
+}

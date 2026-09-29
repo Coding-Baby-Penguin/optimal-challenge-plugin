@@ -64,7 +64,8 @@
       "htmlcov/**",
       "coverage/**",
       "*.log",
-      "logs/**"
+      "logs/**",
+      "docs/reviews/**"
     ]
   },
   "commands": {

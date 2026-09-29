@@ -1,0 +1,33 @@
+name: Quality
+on:
+  push:
+    branches: ["codex/**", "main"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  structural:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Node24 actions require runner>=2.327.1; hosted runners satisfy this.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+      - run: python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+      - run: python scripts/check_quality.py --mode structural --output tmp/quality/summary.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: structural-${{ matrix.os }}
+          retention-days: 5
+          if-no-files-found: warn
+          path: |
+            tmp/quality/summary.json
+            tmp/quality/check-*.log
