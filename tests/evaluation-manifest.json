@@ -81,7 +81,7 @@
       "expected_manifest_version": "1.1.0",
       "cachebuster": "baseline-published-f810f6bd",
       "install_source": "official-github-release-asset",
-      "identity_status": "unverified",
+      "identity_status": "verified-checkpoint-only",
       "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.1.0",
@@ -108,22 +108,32 @@
         "premise_gate": "disabled"
       },
       "evaluation_only": true,
-      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "commit": "7d9765b2c8f2cfbeecb0e0dc480dce07e76a33d5",
+      "commit_role": "base-commit-with-reviewed-overlays",
+      "source_commit": null,
       "tag": "v1.2.0-candidate",
-      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "archive_sha256": "fdc555aa44796c949913507a0a1b23be86673a38f5608acd9c223c7a32ac3b00",
       "policy_config_sha256": "714788085dea4711d8560a7603bd9518aa552457adbbd5a18a01fddf3f3708ac",
       "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
-      "cachebuster": "candidate-93ff8725-arm-b",
-      "install_source": "isolated-git-archive",
-      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "cachebuster": "candidate-7d9765b2c8f2-arm-b",
+      "install_source": "isolated-reviewed-overlay-archive",
+      "identity_status": "verified-checkpoint-only",
       "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
         "marketplace_name": "quality-B-local",
-        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+        "archive_sha256": "fdc555aa44796c949913507a0a1b23be86673a38f5608acd9c223c7a32ac3b00"
       },
-      "installed_plugin_read_back": null
+      "installed_plugin_read_back": {
+        "plugin_id": "optimal-challenge@quality-B-local",
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "marketplace_name": "quality-B-local",
+        "installed": true,
+        "enabled": true,
+        "registry_evidence_sha256": "e490d5addadd5d0b3134d216e2075cd0ead4fad9825442621bb0936629f14373"
+      }
     },
     {
       "arm_id": "C",
@@ -135,22 +145,32 @@
         "premise_gate": "disabled"
       },
       "evaluation_only": true,
-      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "commit": "7d9765b2c8f2cfbeecb0e0dc480dce07e76a33d5",
+      "commit_role": "base-commit-with-reviewed-overlays",
+      "source_commit": null,
       "tag": "v1.2.0-candidate",
-      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "archive_sha256": "c0ba5fb3bf76827b03fb623d131c4d16808efdb3b65741ba0e0e401da2d184cd",
       "policy_config_sha256": "714788085dea4711d8560a7603bd9518aa552457adbbd5a18a01fddf3f3708ac",
       "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
-      "cachebuster": "candidate-93ff8725-arm-c",
-      "install_source": "isolated-git-archive",
-      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "cachebuster": "candidate-7d9765b2c8f2-arm-c",
+      "install_source": "isolated-reviewed-overlay-archive",
+      "identity_status": "verified-checkpoint-only",
       "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
         "marketplace_name": "quality-C-local",
-        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+        "archive_sha256": "c0ba5fb3bf76827b03fb623d131c4d16808efdb3b65741ba0e0e401da2d184cd"
       },
-      "installed_plugin_read_back": null
+      "installed_plugin_read_back": {
+        "plugin_id": "optimal-challenge@quality-C-local",
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "marketplace_name": "quality-C-local",
+        "installed": true,
+        "enabled": true,
+        "registry_evidence_sha256": "b3950e28872daa489ed5c033978e13b287fdf8956ec6b4057a45adfc077241ff"
+      }
     },
     {
       "arm_id": "D",
@@ -162,22 +182,32 @@
         "premise_gate": "enabled"
       },
       "evaluation_only": false,
-      "commit": "93ff8725f9ac1b48c31f8041a022e57061f7f224",
+      "commit": "7d9765b2c8f2cfbeecb0e0dc480dce07e76a33d5",
+      "commit_role": "exact-runtime-source-commit",
+      "source_commit": "7d9765b2c8f2cfbeecb0e0dc480dce07e76a33d5",
       "tag": "v1.2.0-candidate",
-      "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93",
+      "archive_sha256": "72153fc12578d7a8309d21ec554afbe13058a36524660e96567a6b7258e40f3e",
       "policy_config_sha256": "1b68eb69cc630ee8e4b59043b477da5c3c549096099e77f582df02f065b2caf5",
       "policy_config_source": "packaged-config",
       "expected_manifest_version": "1.2.0",
-      "cachebuster": "candidate-93ff8725-arm-d",
+      "cachebuster": "candidate-7d9765b2c8f2-arm-d",
       "install_source": "isolated-git-archive",
-      "identity_status": "unverified-provisional-refresh-after-task-9",
+      "identity_status": "verified-checkpoint-only",
       "install_expectation": {
         "name": "optimal-challenge",
         "version": "1.2.0",
         "marketplace_name": "quality-D-local",
-        "archive_sha256": "3a54f2e4a5a5e872a3fe568d969ecf9a0ebe0624bf05b132424f010490b8ff93"
+        "archive_sha256": "72153fc12578d7a8309d21ec554afbe13058a36524660e96567a6b7258e40f3e"
       },
-      "installed_plugin_read_back": null
+      "installed_plugin_read_back": {
+        "plugin_id": "optimal-challenge@quality-D-local",
+        "name": "optimal-challenge",
+        "version": "1.2.0",
+        "marketplace_name": "quality-D-local",
+        "installed": true,
+        "enabled": true,
+        "registry_evidence_sha256": "64a8e7995331c6dc5034ea1f044579d33d160c0451c6a8b072fdecfff4e6a9f3"
+      }
     }
   ],
   "claim_policy": {

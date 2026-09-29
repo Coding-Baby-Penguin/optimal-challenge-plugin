@@ -160,7 +160,7 @@ def build_subjects(commit: str, output_root: Path) -> dict[str, dict]:
             "evaluation_only": arm != "D",
         }
         (stage / "subject.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+            json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8", newline="\n")
         results[arm] = {"archive": str(archive), "archive_sha256": archive_sha,
                         "manifest": str(stage / "subject.json"),
                         "member_count": len(selected), "source_root": str(source_root)}

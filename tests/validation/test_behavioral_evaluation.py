@@ -349,6 +349,22 @@ class EvaluationArtifactTests(unittest.TestCase):
             self.assertRegex(arm["archive_sha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(set(arm["policy_overrides"]), {"release", "delegation", "continuity", "premise_gate"})
         self.assertTrue(stored["arms"][1]["evaluation_only"])
+        subject_files = {
+            "A": "A-published-v1.1.json", "B": "B-reviewed-7d9765b.json",
+            "C": "C-reviewed-7d9765b.json", "D": "D-candidate-7d9765b.json",
+        }
+        for arm in stored["arms"]:
+            subject_manifest = json.loads((ROOT / "tests/subjects" / subject_files[arm["arm_id"]]).read_text(encoding="utf-8"))
+            self.assertEqual(arm["archive_sha256"], subject_manifest["archive_sha256"])
+            self.assertEqual(arm["cachebuster"], subject_manifest["cachebuster"])
+            self.assertEqual(arm["install_expectation"]["marketplace_name"], subject_manifest["marketplace_name"])
+            self.assertEqual(arm["identity_status"], "verified-checkpoint-only")
+            self.assertTrue(arm["installed_plugin_read_back"]["registry_evidence_sha256"])
+            if arm["arm_id"] in {"B", "C"}:
+                self.assertEqual(arm["commit"], subject_manifest["source_identity"]["base_commit"])
+                self.assertIsNone(arm["source_commit"])
+            elif arm["arm_id"] == "D":
+                self.assertEqual(arm["source_commit"], subject_manifest["source_identity"]["commit"])
 
     def test_approved_fixture_identity_is_independent_of_manifest_and_fixture(self):
         self.assertEqual(EVALUATOR.APPROVED_BEHAVIORAL_FIXTURE_VERSION, 2)

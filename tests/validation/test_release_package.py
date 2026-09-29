@@ -460,7 +460,7 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertIn("$.registry.unexpected", invalid.stdout)
             self.assertNotIn("Traceback", invalid.stderr)
 
-    def test_release_hash_is_external_and_candidate_identity_remains_unverified(self):
+    def test_release_hash_is_external_and_checkpoint_identity_is_not_run_proof(self):
         documentation = (ROOT / "config/README.md").read_text(encoding="utf-8").lower()
         self.assertIn("evaluation manifest is external to the runtime archive", documentation)
         self.assertIn("task 10", documentation)
@@ -469,10 +469,9 @@ class ReleasePackageTests(unittest.TestCase):
         candidate_arms = [arm for arm in manifest["arms"] if arm["arm_id"] in {"B", "C", "D"}]
         self.assertEqual(len(candidate_arms), 3)
         for arm in candidate_arms:
-            self.assertEqual(
-                arm["identity_status"],
-                "unverified-provisional-refresh-after-task-9",
-            )
+            self.assertEqual(arm["identity_status"], "verified-checkpoint-only")
+            self.assertNotEqual(arm["identity_status"], "verified")
+            self.assertTrue(arm["installed_plugin_read_back"]["registry_evidence_sha256"])
         self.assertTrue(manifest["claim_policy"]["refresh_candidate_identity_after_release_build"])
 
 
