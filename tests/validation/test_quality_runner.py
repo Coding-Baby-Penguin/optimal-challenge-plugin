@@ -2,8 +2,17 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+import yaml
 
 class QualityRunnerTests(unittest.TestCase):
+    def test_hosted_workflow_parses_and_runs_structural_gate_on_both_platforms(self):
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/quality.yml").read_text(encoding="utf-8"))
+        job = workflow["jobs"]["structural"]
+        self.assertEqual(set(job["strategy"]["matrix"]["os"]), {"ubuntu-24.04", "windows-2025"})
+        commands = [step["run"] for step in job["steps"] if "run" in step]
+        self.assertTrue(all(isinstance(command, str) for command in commands))
+        self.assertTrue(any("scripts/check_quality.py --mode structural" in command for command in commands))
+
     def test_missing_or_unpinned_prerequisites_block_with_actionable_reason(self):
         from scripts.check_quality import validate_environment
         self.assertEqual(validate_environment((3,12),{"jsonschema":"4.25.1","PyYAML":"6.0.2"}),[])
