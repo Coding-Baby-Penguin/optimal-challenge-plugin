@@ -91,7 +91,9 @@ def canonical_zip_bytes(root: Path, files: list[Path]) -> bytes:
 class ReleasePackageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
-        self.root = Path(self.tempdir.name)
+        # Windows CI may supply a short TEMP path while Path.resolve() returns
+        # its long-name alias. Match the package selector's canonical root.
+        self.root = Path(self.tempdir.name).resolve()
         (self.root / ".codex-plugin").mkdir()
         (self.root / ".codex-plugin" / "plugin.json").write_text(
             '{"name":"fixture"}\n', encoding="utf-8"
@@ -108,6 +110,14 @@ class ReleasePackageTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
+
+    def test_fixture_and_selected_paths_share_the_canonical_root(self):
+        files = iter_package_files(self.root, ["dist/**", "**/__pycache__/**"])
+        self.assertEqual(self.root, Path(self.tempdir.name).resolve())
+        self.assertEqual(
+            [path.relative_to(self.root).as_posix() for path in files],
+            [".codex-plugin/plugin.json", "a.txt", "nested/z.txt"],
+        )
 
     def _git(self, *args: str) -> None:
         subprocess.run(
