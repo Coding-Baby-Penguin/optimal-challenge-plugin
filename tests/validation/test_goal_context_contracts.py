@@ -14,13 +14,21 @@ SKILL = ROOT / "skills" / "optimal-challenge"
 REFERENCES = SKILL / "references"
 TEMPLATES = SKILL / "templates"
 PINSET_PATH = ROOT / "tests" / "goal-context-policy-pins.json"
-APPROVED_GOAL_CONTEXT_PINSET_SHA256 = "2b312dedceb4fcf33dfa8c53f9f4b72e94824a280af63103ff169424ecdf90a3"
+APPROVED_GOAL_CONTEXT_PINSET_SHA256 = "13185f24497a17bb6ae9d764c26d29c5582a9a943717be6f402a92996b475f58"
 PINNED_DOCUMENTS = {
     "skills/optimal-challenge/SKILL.md",
     "skills/optimal-challenge/references/context-management.md",
     "skills/optimal-challenge/references/continuity-collaboration.md",
     "skills/optimal-challenge/references/team-continuity.md",
     "docs/PROJECT-STATE.md",
+    "skills/optimal-challenge/references/host-native.md",
+    "skills/optimal-challenge/references/platform-codex.md",
+    "skills/optimal-challenge/references/platform-claude.md",
+    "skills/optimal-challenge/references/team-orchestration.md",
+    "skills/optimal-challenge/references/cost-quality-routing.md",
+    "skills/optimal-challenge/references/delegation-budget.md",
+    "skills/optimal-challenge/references/project-goal.md",
+    "docs/HOST-SUPPORT.md",
 }
 
 

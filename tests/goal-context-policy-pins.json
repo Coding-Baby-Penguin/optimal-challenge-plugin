@@ -2,11 +2,19 @@
   "schema_version": 1,
   "normalization": "utf8-lf",
   "documents": {
-    "skills/optimal-challenge/SKILL.md": "9946bd4c8c0a4f489685ab17f43229c796df9bab096a2fa0ad3c5c722d86e5c3",
+    "docs/HOST-SUPPORT.md": "433c7647c57bf37f8d0058ff1cc2ad1e5f040881e83f092d65b34430709aa647",
+    "docs/PROJECT-STATE.md": "71c614e2831b1f8b34ec851092fb64041224843e6069c055d46706ef64bc8145",
+    "skills/optimal-challenge/SKILL.md": "34184f39d04faff2980b0459c9628953e25fc131537b695bd1463643937de698",
     "skills/optimal-challenge/references/context-management.md": "6d9647a8fc044b0ed225072cca468facdad2655a73b1b4747eaa8d0272ced2c0",
     "skills/optimal-challenge/references/continuity-collaboration.md": "95d22623813ab8f3c71f1428d7228bd619f4df86d66ef5cd909e7aa754dee9c4",
-    "skills/optimal-challenge/references/team-continuity.md": "3300790d6cecf9ea594739d442b4e063566cca51539ef8982eb147e395a61577",
-    "docs/PROJECT-STATE.md": "edcf3413c18657d47513c526deda5e7aeb30a1268d2732ce548bf2ac7a7f298d"
+    "skills/optimal-challenge/references/cost-quality-routing.md": "820dee60bbf86170d3238b85b7e7e5263a5b55ec2eca3505a2d721b5026c86b4",
+    "skills/optimal-challenge/references/delegation-budget.md": "6ac7ead576209d6c2e4b1304639aff85f4175a2de40a2871105a8fb1e630e476",
+    "skills/optimal-challenge/references/host-native.md": "f61012c6f20c68826f0eddabcdb88cf2213359f24de5824c6a6959e5a6f24cbd",
+    "skills/optimal-challenge/references/platform-claude.md": "4556f4cceff6b138ecc95e99751b27253a569018211bb5545220707c0403c81c",
+    "skills/optimal-challenge/references/platform-codex.md": "58f17e26121403bb9fad5f377c0bbe5ab27954e1b83b151b9a57dc0336a669c6",
+    "skills/optimal-challenge/references/project-goal.md": "84266f7a03bd3d691bd9bda8f26af2410dddce7ae88be85229140ebd282f0cbc",
+    "skills/optimal-challenge/references/team-continuity.md": "30c3c7c16520926774688e17843376006bd4be2df16a7785cadf80431dbfe790",
+    "skills/optimal-challenge/references/team-orchestration.md": "bdf0b6c63724a860e23593f9111a16a735db21a400474dc02ff589f8806c4e0b"
   },
   "update_workflow": [
     "Review the exact diff for every changed pinned document.",

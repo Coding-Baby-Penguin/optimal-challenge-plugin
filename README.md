@@ -17,6 +17,23 @@ A lightweight always-on routing skill/plugin. It handles simple requests directl
 - **Adaptive, not bloated:** repeated patterns may become preferences, instructions, specialist skills, hooks, or tooling; one-off events do not.
 - **Platform-aware storage:** exploit filesystem/git in local repo environments and durable project/cloud storage in chat-oriented environments.
 
+## Native host workflow
+
+Ordinary Codex and Claude Code work follows the compact
+[native workflow](skills/optimal-challenge/references/host-native.md). Use current
+host tools and permissions; the optional Python controller and registry are not a
+prerequisite. Sequential work stays with one implementer unless useful authorized
+delegation or mandatory independence changes the route. Existing user limits and
+approvals remain binding. The same failing strategy gets at most one targeted retry
+with new evidence before checkpoint/reframe; required checks never become passes
+because evidence is missing. No monetary or subscription ceiling is invented.
+
+[Supported surfaces](docs/HOST-SUPPORT.md) distinguishes current model documentation,
+actual host availability and proof still needed. Use [project goal checks](skills/optimal-challenge/references/project-goal.md)
+for substantive target-project work. Native manual reading is not an enforced hook.
+The numeric profile/controller details below remain available for explicit legacy
+configuration/evaluation; they are not required ceremony for normal native dispatch.
+
 ## Choose how it runs
 
 The default is `mode=auto`, `profile=balanced`. Stable, single-step, low-risk requests stay inline and silent: no profile question, premise score, or team bookkeeping appears. You can set one request in plain language, for example:
@@ -43,7 +60,7 @@ Profiles tune tradeoffs; they never override correctness, safety, privacy, expli
 | Quality | 0.50 | 0.10 | 0.05 | 0.10 | 0.25 | 1 | 1 |
 | Custom | normalized user weights | | | | | 1–12 | 1–27 |
 
-Delegation uses `D(t) = benefits − costs`, where benefits cover expected quality, parallelism, context containment, and verification, while costs cover coordination, contention, integration, and failure risk. It proceeds only when `D(t)` clears the profile margin; ties stay inline. Route comparison normalizes quality, whole-job cost, latency, user attention, and expected rework. Whole-job cost includes input, cache write/read, output, and tool use; unavailable measurements remain `unknown` and cannot support a cost-saving claim.
+Delegation uses `D(t) = benefits − costs`, where benefits cover expected quality, parallelism, context containment, and verification, while costs cover coordination, contention, integration, and failure risk. It proceeds only when `D(t)` clears the profile margin; ties stay inline. Route comparison normalizes quality, whole-job cost, latency, user attention, and expected rework. Whole-job accounting includes every role and tool; cached input/reasoning subsets and cumulative snapshots are not double-added. Missing measurements remain `unknown` and cannot support a cost-saving claim.
 
 ## Better questions, not more questions
 
@@ -227,7 +244,7 @@ The supported one-line programmatic task override is:
 load_effective_config(root, task_override={"mode": "team-requested", "profile": "quality"})
 ```
 
-Always use `load_effective_config(...)`; do not manually merge built-ins, committed defaults, the ignored local override, and the current request.
+For this explicit controller mode, always use `load_effective_config(...)`; do not manually merge built-ins, committed defaults, the ignored local override, and the current request.
 
 ## Adaptation and self-improvement
 
@@ -248,6 +265,6 @@ On resume, compare the project-state file with the source tree and current versi
 
 ## Verification note
 
-The included automated tests verify package structure, formulas, state invariants, policy boundaries, and evaluation-data integrity. They do not prove that every host model will route identically or that a provider enforces an advisory ceiling. Codex local, OpenAI API/Agents SDK, Claude Code local, and Anthropic API/Agent SDK capabilities remain `policy-only` or `unsupported` until exact-surface/version evidence and fresh isolated acceptance runs exist.
+The included automated tests verify package structure, formulas, state invariants, policy boundaries, and evaluation-data integrity. They do not prove that every host model will route identically or that a provider enforces an advisory ceiling. The legacy capability matrix remains `policy-only` or `unsupported` until its exact-surface/version evidence and acceptance exist. Normal native use follows the separate supported-host boundary and needs its own installed invocation/outcome evidence; a catalog alone proves neither use nor enforcement.
 
 Required failures use `Succeeded`, `Failed`, `Partial`, `Blocked`, or `Degraded`. A non-success result includes the failed operation, evidence, impact, retry/fallback state, and one recovery action. Exit code 0, a queued operation, or an upload acknowledgement alone is never completion evidence.

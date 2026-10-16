@@ -2,6 +2,19 @@
 
 Create a team only after the direct and premise gates and the economic delegation gate select real separable work. The coordinator remains the sole user-facing process authority unless the user explicitly requests a handoff.
 
+## Native default and legacy controller scope
+
+For ordinary host-native work, [native workflow](host-native.md) takes precedence.
+Use the authority, ownership, compact handoff and budget-truth rules below. Native
+assignments may express the capsule fields directly; templates and numeric profile
+calculations are optional. Do not require Python config resolution, adapter objects,
+or registry/ledger validation for this path. Host instructions and current explicit
+user limits determine actual concurrency; no configured count creates permission.
+
+The machine-readable configuration, VerifiedCapabilityContext, schema and transaction
+requirements below apply only to an explicitly selected legacy controller/evaluation
+workflow. That mode must pass its checks; native guidance does not override its failures.
+
 ## Invocation and precedence
 
 - `inline-only`: create no specialists. If mandatory independent review or another equal-authority constraint conflicts, ask one concise resolution question rather than spawning silently.

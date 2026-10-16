@@ -1,28 +1,42 @@
 # Project state
 
 - **North Star / root goal:** Maximize the probability of an accepted, high-quality result while minimizing total tokens, time, cost, user attention, and avoidable rework through the smallest adequate workflow.
-- **Success criteria:** Work advances an explicit outcome; simple reversible work stays direct; costly or rejection-prone work uses only decision-changing research and a representative pilot; agents and questions are used only when their expected value exceeds their cost; context passed between phases is sufficient, relevant, and compact; failures and unverified claims remain visible.
-- **Non-goals:** No MCP or cloud-settings service; no security or authentication platform; no universal workflow ceremony; no provider budget-controller claims without host evidence.
-- **Current phase:** Independent review of the locally verified goal anchoring and context pruning enhancement, while preserving the existing 1.2.0 release evidence and blockers.
-- **Goal contribution:** Prevent technically correct work in the wrong direction by keeping the root goal stable, pruning irrelevant context, and requiring costly actions to identify their decision value and stop condition.
-- **Working set:** This North Star; the approved bounded goal/context design; the goal/context contract files and tests; the prior Task 10 `UNVERIFIED` acceptance blocker. Older implementation transcripts and abandoned MCP/security tangents are COLD or ARCHIVE and are not forwarded.
-- **Last updated:** 2026-09-27
-- **Current verified state:** Tasks 1–9 and the Task 10 source corrections remain implemented. A third independent review scored the goal/context enhancement 8.6/10 and rejected lexical mutation checks as the primary oracle. A centralized normalized pinset now covers the router, context policy, both continuity policies, and this canonical truth boundary; a separately approved pinset digest makes policy or pin changes deliberate. The exact bundled-Python full discovery command passes 265 tests; independent re-review is pending. Fresh-host behavioral acceptance remains `UNVERIFIED` and release completion is blocked.
-- **Completed:** Orchestration configuration; premise/delegation/review/utility calculations; registry and allocation ledger; capsule templates; routing and continuity policy; fail-closed capability evidence; behavioral-evaluation contracts; 1.2.0 metadata and documentation; deterministic packaging; local/official/adversarial/security validation; source review corrections for invocation authority, zero-capacity review, and confidence-qualified acceptance.
-- **Changed artifacts:** Goal/context policy and router wiring; additive goal-anchor and return `next_action` fields; project-state template and canonical state; README behavior summary; four routing scenarios; `tests/goal-context-policy-pins.json`; structural-pin tests; and the canonical router hash in `tests/evaluation-manifest.json`.
+- **Success criteria:** Useful outcomes through the smallest adequate workflow; correct target-project direction; least context; clear handoffs; bounded concurrency and retries; honest all-role resource accounting; independent review where required. Counts and preparation alone are insufficient.
+- **Non-goals:** No MCP or cloud-settings service; no security or authentication platform; no universal workflow ceremony; no unproven provider budget enforcement; no automatic model/global-settings upgrades.
+- **Current phase:** Scoped native-host workflow qualification, 2026-10-16. The owner-expanded direction supersedes the earlier goal/context-only maintenance scope while preserving the North Star and historical evidence.
+- **Goal contribution:** Remove an absent host-bridge prerequisite from ordinary native work, retain fail-closed explicit legacy evaluation, and verify useful installed behavior rather than fixture-only adoption. Context pruning and target-goal checks remain required at their existing triggers.
+- **Working set:** Router, native/host/team/continuity guidance, project-goal maintenance, affected regressions, exact package/configuration and actual installed outcomes. Other owner edits remain isolated. Source and task evidence outrank remembered conversation.
+- **Current verified state:** The clean upstream branch failed strict raw-byte pins on Windows CRLF checkout. LF bytes exactly match unchanged HEAD blobs and all original hashes; the strict integrated baseline then passed. Native policy is a new working revision requiring its own exact review and outcome evidence. No source test or catalog establishes whole-host adoption or savings.
+- **Changed artifacts:** Compact native router/reference; current official supported-surface guidance; explicit native precedence over optional legacy controller requirements; goal helper/reference/tests ported only from the reviewed installed goal-maintenance paths; LF checkout policy. No API adapter, active hook, service or permission change.
 
-## Development path
+## Now / Next / Later
 
-- **Now:** The bounded goal-anchor/context-pruning contracts and structural-pin repair are locally verified without a runtime evaluator, service, MCP dependency, or security boundary; independent re-review is pending.
-- **Next:** Obtain independent review of this enhancement, then return to the unchanged Task 10 acceptance blocker.
-- **Later:** Run five stochastic repetitions per required case and deterministic cases once, evaluate non-inferiority/benefit confidence, then commit/push only if every required acceptance gate passes.
+- **Now:** Review exact affected policy, run focused deterministic regressions, then qualify the exact installed candidate through useful non-sensitive native tasks with independent outcome checks.
+- **Next:** Record installed identity, actual model/effort/permissions, outcomes, missing measurements, denied/partial recovery and host gaps in the existing project task evidence. Changes after review require inspection of their affected delta.
+- **Later:** Resolve unavailable host rows when the owner provides the required direction/access; no automatic login or new paid integration. Do not restart the historical full matrix merely to validate this bounded revision.
+
+## Historical acceptance and release boundary
+
+Fresh-host behavioral acceptance for the earlier Task 10 A/B/C/D experiment remains
+`UNVERIFIED`. Its strict fixture oracle, provisional subject identities, failed runs
+and frozen evidence are not repaired by this native workflow change. Arm A's archive
+`51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1` differed in
+four members from its pinned `c3c379ab` commit; tag v1.1.0 targeted `b4510c8`.
+Arms B/C/D retained provisional `93ff8725` / `3a54f2e4...` identities. Old installed
+cache and missing fresh model/reasoning/state readbacks invalidated those preflights.
+Later installs cannot retroactively validate them. No general quality/cost claim,
+public release, main merge or tag follows from this working revision.
+
+The current scoped working branch may be committed/pushed after its applicable exact
+review and acceptance under current owner direction. The old universal Task 10 push
+gate applies to that historical release claim, not every future reviewed working
+revision. Historical `git push origin main` remains held. The old tools-disabled
+diagnostic stays HELD; a tool-using scoped trial has a distinct subject and claim.
 
 ## Continuity
 
-- **Workflow convention:** Commit and push only after every required Task 10 gate passes; an unverified or inconclusive host gate blocks release push.
-- **Blockers:** Arm A archive SHA `51bab08ea52ead000c7b450b1040d4da87470bfafa210e6c46c9285b57bef7e1` exists, but four members differ from pinned commit `c3c379ab` and remote tag `v1.1.0` targets `b4510c8`. Arms B/C/D still pin provisional `93ff8725` / `3a54f2e4...` identities. During the invalid A/B/C/D preflights the installed cache was pre-fix commit `3dcf78c`; it was later refreshed to reviewed files with manifest `1.2.0+codex.20260927031000`, but that cannot retroactively validate those runs. Arm-specific cachebusters, exact fresh-task model/reasoning read-back, and disposable-state fingerprints remain absent.
-- **Unresolved failures:** Fresh-host A/B/C/D behavioral acceptance is `UNVERIFIED`; no run bundle, aggregate, cost/latency claim, quality comparison, platform-support claim, or provider-enforcement claim is authorized. API/SDK rows remain policy-only or unsupported without exact dual evidence.
-- **Pending decisions:** Choose or rebuild one immutable v1.1 baseline subject, then create/install verifiable B/C/D arm subjects. Until that evidence exists, Task 10 cannot complete and `git push origin main` must not run.
-- **Verification evidence:** Third-review RED reproduced five lexical-oracle escapes: disregarding or not running the checkpoint, reviewer permission to replace the root goal, forwarding the entire conversation transcript, and claiming fresh-host acceptance was verified. Structural-pin GREEN rejects all five through normalized document hashes and independently approves the centralized pinset. `C:\Users\rawwi\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest discover -v` with disposable pinned dependencies passes all 265 tests. Integrated validation retains Task 10 as `UNVERIFIED`; adversarial, routing, structural research, orchestration, and official plugin/skill validators pass.
-- **Next concrete action:** Independently review the bounded goal/context change, resolve any material finding, then resume fresh-host A/B/C/D acceptance work.
-- **Resume command or entry point:** `git status --short` followed by `python scripts/validate.py`, `python -m unittest discover -q`, `python scripts/adversarial_review.py`, and `python scripts/package_release.py` with the pinned disposable development dependencies on `PYTHONPATH`.
+- **Source ownership:** Keep existing uncommitted source/index work and other worktrees intact. Review/package this isolated revision only; never blindly reload the dirty canonical source.
+- **Host gaps:** Each surface needs its own installed/use evidence. Claude Code live work is blocked without an authenticated session; Desktop/catalog availability cannot fill it. Other unexercised native features remain UNKNOWN/NOT RUN. No credentials/access change is part of this revision.
+- **Evidence location:** Existing project Codex/evidence host-adoption task record holds dated preflight, baseline failures, exact review batches, test results and actual installation/adoption observations. It is supporting evidence, not a second roadmap.
+- **Next concrete action:** Inspect the exact candidate review and latest actual test/install evidence; continue its first unfinished approved action. Check current quota/capacity before any live run; do not replay completed writes or full suites.
+- **Resume entry point:** Inspect git status and current goal first; run only the affected checks named by the latest evidence. Baseline validation, fixture results and actual installed acceptance remain distinct.

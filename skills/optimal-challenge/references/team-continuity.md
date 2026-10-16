@@ -2,6 +2,12 @@
 
 A logical teammate is a stable role, responsibility boundary, capability class, relevant evidence references, assignment history, and bounded trust record. It is not the same thing as a retained full conversation.
 
+For native work, [native workflow](host-native.md) takes precedence. A compact
+handoff with the fields below is sufficient; templates and a disposable machine
+registry are optional. References to registry/ledger validation and capability
+checks below apply only when using that explicit legacy controller mode. Actual
+native handles still require host-specific verification before reuse.
+
 Choose per assignment:
 
 - **Resume** a verified native context only for a direct continuation when costly local exploration remains relevant and the handle is current for the exact host surface.

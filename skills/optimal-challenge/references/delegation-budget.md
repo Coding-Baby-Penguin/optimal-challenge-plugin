@@ -2,6 +2,10 @@
 
 The parent is process authority. Workers execute narrow roles.
 
+For native work, [native workflow](host-native.md) takes precedence; numeric
+calculations and machine templates below are optional unless the legacy controller
+mode is explicitly selected. Keep the same authority, usefulness and safety rules.
+
 ## Break-even gate
 Delegate only when isolation, independent judgment, parallelism, or context containment is worth fresh-context and whole-job coordination cost. Apply the evidence-backed calculation, profile margin, strong-benefit rule, allocation gate, and tie behavior in `cost-quality-routing.md`. Keep trivial, tightly coupled, overlapping-write, and single-file mechanical work inline. Batch small same-shape edits.
 

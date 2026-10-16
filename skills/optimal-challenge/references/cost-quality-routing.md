@@ -2,6 +2,12 @@
 
 Choose the least expensive route expected to finish efficiently. Availability alone is not value.
 
+For ordinary native work, [native workflow](host-native.md) takes precedence.
+Compare expected benefit with setup, transfer, merge, review and rework costs using
+available evidence. Unknown economics do not justify optional spawning; mandatory
+independence remains binding. The numeric scores, profiles and executable arithmetic
+below are an optional explicit legacy evaluation mode, not a native dispatch gate.
+
 ## Delegation value
 
 ```text
@@ -33,8 +39,13 @@ Utility = lambda_quality(ExpectedQuality)
           - lambda_attention(UserInterruptionCost)
           - lambda_rework(ExpectedReworkRisk)
 
-TotalJobCost = input + cache_write + cache_read + output + tools
+TotalJobCost = non-overlapping measured provider charges + tools
                + coordination + verification + retry
 ```
+
+Do not add cached native input to total input, or reasoning to total output: both
+are subsets. Deduplicate/difference cumulative snapshots per session/reset; include
+all roles and label missing observations. Token totals are not prices or subscription
+percentages. Only verified non-overlapping billing categories can be summed as money.
 
 Normalize every factor to 0-3. Named `(quality, cost, latency, attention, rework)` weights are Economy `(0.35, 0.35, 0.10, 0.10, 0.10)`, Balanced `(0.45, 0.20, 0.10, 0.10, 0.15)`, and Quality `(0.50, 0.10, 0.05, 0.10, 0.25)`; Custom weights sum to 1. Utility selects among routes only after authority, safety, premise, delegation, allocation, and review gates pass. Unknown inputs make utility explanatory only. Record factors, evidence, provenance, threshold, margin, chosen route, and reason; use `scripts/evaluate_routing.py` to check the arithmetic.

@@ -1,6 +1,11 @@
 # Claude Code and Anthropic Capability Adapter
 
-Use this module only after the router needs a host capability. Repository state remains authoritative; a documented capability is not proof that the active host exposes it.
+For ordinary native work, [native workflow](host-native.md) takes precedence.
+Use actual exposed host tools and verified permissions; no Python bridge is required.
+This document's resolution contract and matrix apply only to explicitly selected
+legacy controller/evaluation or API-adapter claims. They remain fail-closed and do
+not establish current native support. Repository state remains authoritative; a
+documented capability is not proof that the active host exposes it.
 
 ## Resolution contract
 
